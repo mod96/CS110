@@ -55,7 +55,7 @@ bool imdb::getCredits(const string& player, vector<film>& films) const {
 		info_pointer += size;
 		short films_count = *(short *)info_pointer;
 		info_pointer += 2;
-		if ((size + 2) % 4 > 0) {
+		if (((size + 2) & 3) > 0) {
 			info_pointer += 2;
 		}
 
@@ -101,7 +101,7 @@ bool imdb::getCast(const film& movie, vector<string>& players) const {
 
 		short actors_count = *(short *)info_pointer;
 		info_pointer += 2;
-		if ((size + 2) % 4 > 0) {
+		if (((size + 2) & 3) > 0) {
 			info_pointer += 2;
 		}
 
