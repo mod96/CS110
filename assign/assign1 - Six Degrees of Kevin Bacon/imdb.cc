@@ -82,8 +82,7 @@ bool imdb::getCast(const film& movie, vector<string>& players) const {
 									char *targ_pointer = ((char *)movieFile) + offset;
 									string name = targ_pointer;
 									if (movie.title == name) {
-										targ_pointer += name.size();
-										while (*targ_pointer == '\0') targ_pointer++;
+										targ_pointer += name.size() + 1;
 										return 1900 + *(unsigned char *)targ_pointer < movie.year;
 									}
 									return name < movie.title;
