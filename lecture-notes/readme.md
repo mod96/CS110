@@ -94,3 +94,209 @@ original file would still remain.
 
 # Lecture 04: Files, Memory, and Processes
 
+
+## 1. File Descriptor
+
+![pcb](img/process-control-block.jpg)
+
+Linux maintains a data structure for each active process. (Actually, linux handles all thing like 'file') These data structures are called `process control blocks`, and they are stored in the `process table`. Process control blocks store many things (the user who launched it, what time it was launched, CPU
+state, etc.). Among the many items it stores is the `file descriptor table`. A `file descriptor` (used by your program) is a small integer that's an index into this table. It is the identifier needed to interact with a resource (most often a file) via
+system calls. 
+
+![dt](img/descriptortable.PNG)
+
+Descriptors 0, 1, and 2 are standard input, standard output, and standard error, but there are
+no predefined meanings for descriptors 3 and up. When you run a program from the terminal,
+descriptors 0, 1, and 2 are most often bound to the terminal.
+
+When allocating a new file descriptor, kernel chooses the smallest available number. These semantics are important! If you close stdout (1) then open a file, it will be assigned
+to file descriptor 1 so act as stdout (this is how $ cat in.txt > out.txt works)
+
+![vnode](img/vnode.PNG)
+
+If a descriptor table entry is in use, it maintains a link to an `open file table entry`. An open file table entry maintains information about an active session (current position) with a file (or something that behaves like a file like terminal, or a network connection).
+
+`mode` tracks whether we're reading, writing, or both. `cursor` tracks a position within the file payload. `refcount` tracks the number of descriptors across all processes that refer to that session.
+
+Each open file entry has a pointer to a `vnode`, which is a
+structure housing static information about a file or filelike
+resource. The vnode is the kernel's abstraction of an actual file: it includes information on what kind of file
+it is, how many file table entries reference it, function pointers for performing operations, and copy of an inode from disk. A vnode's interface is filesystem independent, but its implementation is filesystem
+specific; any file system (or file abstraction) can put state it needs to in the vnode (e.g., inode number)
+
+
+## 2. System Calls
+
+System calls are functions that our programs use to interact with the OS and request some core service be executed on their behalf:  open, read, write, close, stat, and lstat.
+
+Functions like printf, malloc, and opendir aren't themselves system calls. They're C library functions that themselves rely on system calls to get their jobs done.
+
+### Recap: memory area
+
+![memory](img/memory.PNG)
+
+* code segment stores all of the assembly code instructions speciﬁc to your process. 
+* data segment intentionally rests directly on top of the code segment, and it houses all of the explicitly initialized global variables that can be modiﬁed by the program.
+* heap is a software-managed segment used to support the implementation of malloc, realloc, free, and their C++ equivalents.
+* user stack segment provides the memory needed to manage user function call and return along with the scratch space needed by function parameters and local variables.
+* rodata segment also stores global variables, but only those which are immutable—i.e. constants.
+* bss segment houses the uninitialized global variables, which are defaulted to be zero
+* shared library segment links to shared libraries like libc and libstdc++ with code for routines like C's printf, C's malloc, or C++'s getline.
+
+### kernel space
+
+System calls like open and stat need access to OS implementation detail that should not be exposed or otherwise accessible to the user program. That means the activation records for system calls need to be stored in a region of memory that users can't touch, and the system call implementations need to be executed in a privileged, superuser mode so that it has access to information and resources that traditional functions shouldn't have.
+
+Housed within kernel space is a kernel stack segment, itself used to organize stack frames for system calls.
+
+We know that callq is used for user function call, but callq would dereference a function pointer we're not permitted to dereference, since it resides in kernel space. So, how user can call system function? 
+
+The system issues a software interrupt (otherwise known as a trap) by executing `syscall`, which prompts an `interrupt handler` to execute in superuser mode.
+
+The interrupt handler builds a frame in the kernel stack, executes the relevant code, places any return value in %rax\*, and then executes iretq to return from the interrupt handler, revert from superuser mode, and execute the instruction following the syscall.
+
+\* The relevant opcode is placed in %rax. Each system call has its own opcode (e.g. 0 for read, 1 for write, 2 for open, 3 for close, 4 for stat, and so forth). If %rax is negative, errno is set to abs(%rax) and %rax is updated to contain a -1.
+
+
+## 3. Introduction to Multiprocessing: fork
+
+```c
+#include <unistd.h>  // fork, getpid, getppid
+pid_t pid = getpid();
+```
+
+The `fork()` system call creates a new process. It creates a new process that starts on the following instruction after the original, parent, process. The parent process also continues on the following instruction, as well. 
+
+The fork call returns a pid_t (an integer) to both processes. The parent process gets a return value that is the pid of the child process. The child process gets a return value of 0, indicating that it is the child.
+
+If parent process dies eariler than the child process, child's parent becomes root.
+
+All memory is identical between the parent and child, though it is not shared (it is copied - copy on write).
+
+### Example1
+```c
+int main(int argc, char *argv[]) {
+  printf("Greetings from process %d! (parent %d)\n", getpid(), getppid());
+  pid_t pid = fork();
+  assert(pid >= 0);
+  printf("Bye-bye from process %d! (parent %d)\n", getpid(), getppid());
+  return 0;
+}
+```
+```console
+myth60$ ./basic-fork 
+Greetings from process 29686! (parent 29351)
+Bye-bye from process 29686! (parent 29351)
+Bye-bye from process 29687! (parent 29686)
+
+myth60$ ./basic-fork 
+Greetings from process 29688! (parent 29351)
+Bye-bye from process 29688! (parent 29351)
+Bye-bye from process 29689! (parent 29688)
+```
+
+The original process has a parent, which is the shell (pid 29351) -- that is the program that you run in the terminal.
+
+### Example2
+```c
+static const char const *kTrail = "abcd";
+int main(int argc, char *argv[]) {
+  size_t trailLength = strlen(kTrail);
+  for (size_t i = 0; i < trailLength; i++) {
+    printf("%c\n", kTrail[i]);
+    pid_t pid = fork();
+    assert(pid >= 0);
+  }
+  return 0;
+}
+```
+```console
+myth60$ ./fork-puzzle
+a
+b
+b
+c
+d
+c
+d
+c
+d
+d
+c
+d
+myth60$ d 
+d
+d
+```
+
+Fork is used pervasively in applications. For example, the shell forks a new process to run the program. Fork is used pervasively in systems. For example, When your kernel boots, it starts the system.d program, which forks off all of the services and systems for your computer.
+
+### Example3: waitpid
+waitpid can be used to temporarily block a process until a child process exits.
+```c
+pid_t waitpid(pid_t pid, int *status, int options);
+```
+return value is the pid of the child that exited, or 1 if waitpid was called and there were no child processes in the supplied wait set.
+```c
+int main(int argc, char *argv[]) {
+  printf("Before.\n");
+  pid_t pid = fork();
+  printf("After.\n");
+  if (pid == 0) {
+    printf("I am the child, and the parent will wait up for me.\n");
+    return 110; // contrived exit status
+  } else {
+    int status;
+    waitpid(pid, &status, 0)
+    if (WIFEXITED(status)) {
+      printf("Child exited with status %d.\n", WEXITSTATUS(status));
+    } else {
+      printf("Child terminated abnormally.\n");
+    }
+    return 0;
+  }
+ }
+ ```
+ ```console
+ myth60$ ./separate 
+Before.
+After.
+After.
+I am the child, and the parent will wait up for me.
+Child exited with status 110.
+myth60$
+```
+
+### Example 4: synchronizing with waitpid
+```c
+int main(int argc, char *argv[]) {
+  pid_t children[8];
+  for (size_t i = 0; i < 8; i++) {
+    if ((children[i] = fork()) == 0) exit(110 + i);
+  }
+  for (size_t i = 0; i < 8; i++) {
+    int status;
+    pid_t pid = waitpid(children[i], &status, 0);
+    assert(pid == children[i]);
+    assert(WIFEXITED(status) && (WEXITSTATUS(status) == (110 + i)));
+    printf("Child with pid %d accounted for (return status of %d).\n", 
+           children[i], WEXITSTATUS(status));
+  }
+  return 0;
+}
+```
+```console
+myth60$ ./reap-as-they-exit 
+Child with pid 4689 accounted for (return status of 110).
+Child with pid 4690 accounted for (return status of 111).
+Child with pid 4691 accounted for (return status of 112).
+Child with pid 4692 accounted for (return status of 113).
+Child with pid 4693 accounted for (return status of 114).
+Child with pid 4694 accounted for (return status of 115).
+Child with pid 4695 accounted for (return status of 116).
+Child with pid 4696 accounted for (return status of 117).
+myth60$
+```
+
+# Lecture 05: fork and Understanding execvp
+
