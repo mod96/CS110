@@ -231,12 +231,49 @@ d
 
 Fork is used pervasively in applications. For example, the shell forks a new process to run the program. Fork is used pervasively in systems. For example, When your kernel boots, it starts the system.d program, which forks off all of the services and systems for your computer.
 
-### Example3: waitpid
+# Lecture 05: fork and Understanding execvp
+
+## 1. fork (continued)
+
+### Example3: remember it's virtual memory
+```c
+int main(int argc, char *argv[]) {
+    char str[128];
+    strcpy(str, "SpongeBob");
+    printf("str's addres is %p\n", str);
+    pid_t pid = fork();
+    if (pid == 0) { // child
+        printf("I am the child. str's address is %p\n", str);
+        strcpy(str, "SquarePants");
+        printf("I am the child and I changed str to %s. str's address is still %p\n", str, str);
+    } else {
+        printf("I am the parent. str's address is %p\n", str);
+        printf("I am the parent, and I'm going to sleep for 2 seconds.\n");
+        sleep(2);
+        printf("I am the parent. I just woke up. str's address is %p, and it's value is %s\n", str, str);
+    }
+
+    return 0;
+}
+```
+```console
+$ ./fork-copy
+str's addres is 0x7ffe092639d0
+I am the parent. str's address is 0x7ffe092639d0
+I am the parent, and I'm going to sleep for 2 seconds.
+I am the child. str's address is 0x7ffe092639d0
+I am the child and I changed str to SquarePants. str's address is still 0x7ffe092639d0
+I am the parent. I just woke up. str's address is 0x7ffe092639d0, and it's value is SpongeBob
+```
+For both processes above, the pointer value is 0x7ffe092639d0. But, in physical memory, there has been a translation, so that there are actually two different memory locations.
+
+### Example4: waitpid
+
 waitpid can be used to temporarily block a process until a child process exits.
 ```c
 pid_t waitpid(pid_t pid, int *status, int options);
 ```
-return value is the pid of the child that exited, or 1 if waitpid was called and there were no child processes in the supplied wait set.
+return value is the pid of the child that exited, or -1 if waitpid was called and there were no child processes in the supplied wait set.
 ```c
 int main(int argc, char *argv[]) {
   printf("Before.\n");
@@ -267,7 +304,47 @@ Child exited with status 110.
 myth60$
 ```
 
-### Example 4: synchronizing with waitpid
+The waitpid call also donates child process-oriented resources back to the system. So you should use waitpid for every process using fork.
+
+[See here](https://www.ibm.com/docs/en/zos/2.4.0?topic=functions-waitpid-wait-specific-child-process-end) for macros like `WIFEXITED`.
+
+### Example5: it's virtual, but library is shared.
+
+```c
+int main(int argc, char *argv[]) {
+    printf("I'm unique and just get printed once.\n");
+    bool parent = fork() != 0;
+    if ((random() % 2 == 0) == parent) sleep(1);
+    if (parent) waitpid(pid, NULL, 0);
+    printf("I get printed twice (this one is being printed from the %s).\n",
+        parent ? "parent" : "child");
+    return 0;
+}
+```
+seems like `random()` could generate different value for each process but it's not. since `random` is sudo random function, parent and child has same return value for random and therefore only one of them sleep. (if you want different value, seed after fork.)
+
+### Example6: multiple childs & ECHILD
+```c
+int main(int argc, char *argv[]) {
+  for (size_t i = 0; i < 8; i++) {
+    if (fork() == 0) exit(110 + i);
+  } 
+  while (true) {  // only master parent will do this
+    int status;
+    pid_t pid = waitpid(-1, &status, 0);
+    if (pid == -1) { assert(errno == ECHILD); break; }
+    if (WIFEXITED(status)) {
+      printf("Child %d exited: status %d\n", pid, WEXITSTATUS(status));
+    } else {
+      printf("Child %d exited abnormally.\n", pid);
+    }
+  }
+  return 0;
+}
+```
+`pid == -1` just means that `waitpid` was unsuccessful. So we check errno. [See here](https://www.ibm.com/docs/en/zos/2.4.0?topic=functions-waitpid-wait-specific-child-process-end) for more information.
+
+### Example7: synchronizing with waitpid
 ```c
 int main(int argc, char *argv[]) {
   pid_t children[8];
@@ -298,5 +375,50 @@ Child with pid 4696 accounted for (return status of 117).
 myth60$
 ```
 
-# Lecture 05: fork and Understanding execvp
+## execvp
 
+execvp effectively reboots a process to run a different program from scratch. Here is the prototype:
+```c
+int execvp(const char *path, char *argv[]);
+```
+If execvp fails to cannibalize the process and install a new executable image within it, it returns -1 to express failure. If execvp succeeds, it never returns in the calling process. 
+
+Actually, there are several functions starting with exec (execl, execv, execle, execve, execlp, execvp).
+* l: pass argv with char *
+* v: pass argv with char *[]
+* e: pass environment variable with char *[]
+* p: pass path name of the new process image file
+
+### Example
+```c
+static int mysystem(const char *command) {
+  pid_t pid = fork();
+  if (pid == 0) {
+    char *arguments[] = {"/bin/sh", "-c", (char *) command, NULL};
+    execvp(arguments[0], arguments);
+    // if execvp succeed, this line will never be read.
+    printf("Failed to invoke /bin/sh to execute the supplied command.");
+    exit(0);
+  }
+  int status;
+  waitpid(pid, &status, 0);
+  return WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
+}
+
+static const size_t kMaxLine = 2048;
+int main(int argc, char *argv[]) {
+  char command[kMaxLine];
+  while (true) {
+    printf("> ");
+    fgets(command, kMaxLine, stdin);
+    if (feof(stdin)) break; 
+    command[strlen(command) - 1] = '\0'; // overwrite '\n'
+    printf("retcode = %d\n", mysystem(command));
+  }
+  
+  printf("\n");
+  return 0;
+}
+```
+Why not call execvp inside parent and forgo the child process altogether? Because
+execvp would consume the calling process(what 'cannibalize' means above), and that's not what we want.
