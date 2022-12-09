@@ -585,9 +585,13 @@ cgregg@myth60$
 
 And that's how something like `cat unsorted.txt | sort` works.
 
-## 4. Signals
+# Lecture 07: Signals
 
-A signal is a small message that notifies a process that an event of some type occurred. Signals are often sent by the kernel, but they can be sent from other processes as well.
+## 1. Signals
+
+A `signal` is a small message that notifies a process that an event of some type occurred. Signals are often sent by the kernel, but they can be sent from other processes as well.
+
+`signal handler` is a function that executes in response to the arrival and consumption of a signal. The signal handler runs in the process that receives the signal.
 
 ### Signal Examples
 
@@ -603,6 +607,9 @@ When a process attempts to publish data to the write end of a pipe after the rea
 
 Whenever a child process changes state—that is, it exits, crashes, stops, or resumes from a stopped state, the kernel sends a `SIGCHLD` signal to the process's parent. By default, the signal is ignored. In fact, we've ignored it until right now and gotten away with it. The parent process, however, is still required to reap child processes, so the parent will typically register a custom SIGCHLD handler to be asynchronously invoked whenever a child process changes state. Custom SIGCHLD handlers almost always include calls to waitpid, which can be used to surface the pids of child processes that've changed state. If the child process of interest actually terminated, either normally or abnormally, the waitpid also culls the zombie the relevant child process has become.
 
+
+### Example: DisneyLand
+
 ```c
 #include <signal.h>     // for signal
 
@@ -612,6 +619,7 @@ static size_t numDone = 0;
 static void reapChild(int unused) {
   waitpid(-1, NULL, 0);
   numDone++;
+  printf("numDone: %zu", numDone);
 }
 
 int main(int argc, char *argv[]) {
@@ -625,4 +633,211 @@ int main(int argc, char *argv[]) {
       return 0;
     }
   }
+  while (numDone < kNumChildren) {
+    printf("At least one child still playing, so dad nods off.\n");
+    snooze(5); // our implementation -- does not wake up upon signal
+    printf("Dad wakes up! ");
+  }
+  printf("All children accounted for.  Good job, dad!\n");
+  return 0;
+}
 ```
+```console
+cgregg@myth60$ ./five-children 
+Let my five children play while I take a nap.
+At least one child still playing, so dad nods off.
+Child #1 tired... returns to dad.
+Dad wakes up! At least one child still playing, so dad nods off.
+Child #2 tired... returns to dad.
+Child #3 tired... returns to dad.
+Dad wakes up! At least one child still playing, so dad nods off.
+Child #4 tired... returns to dad.
+Child #5 tired... returns to dad.
+Dad wakes up! All children accounted for.  Good job, dad!
+cgregg@myth60$
+```
+
+if `sleep(3 * kid);` changed to `sleep(3)`, kernel race condition arises. And if multiple signals come in at the same time, the signal handler is only run once. Although there's little chance of all children process finish somewhat different time so signal handler called five times, most cases less than that. So, in that case, we could modify signal handler as follows:
+```c
+static void reapChild(int unused) {
+  while (true) {
+    pid_t pid = waitpid(-1, NULL, 0);
+    // A return value of -1 typically means that there are no child processes left.
+    if (pid < 0) break;
+    numDone++;
+  }
+}
+```
+but then, if it is `sleep(3 * kid);`, dad doesn't wake up because signal handler is on the parent process and once it's evoked, another line of code cannot be executed until the signal handler returns. Signal handlers and the asynchronous interrupts that come with them mean that your normal execution flow can, in general, be interrupted at any time to handle signals.
+
+Finally it becomes:
+```c
+static void reapChild(int unused) {
+  while (true) {
+    pid_t pid = waitpid(-1, NULL, WNOHANG);
+    if (pid <= 0) break; // note the < is now a <=
+    numDone++;
+  }
+}
+```
+A return value by waitpid of 0 means there are other child processes, and we would have normally waited for them to exit, but we’re returning instead because of the `WNOHANG` being passed in as the third argument.
+
+The third argument supplied to waitpid can include several flags bitwise-or'ed together. [see here](https://stackoverflow.com/questions/33508997/waitpid-wnohang-wuntraced-how-do-i-use-these) for more information.
+
+* `WUNTRACED` informs waitpid to block until some child process has either ended or been stopped (paused).
+* `WCONTINUED` informs waitpid to block until some child process has either ended or resumed from a stopped state.
+* `WUNTRACED | WCONTINUED | WNOHANG` asks that waitpid return information about a child process that has changed state (i.e. exited, crashed, stopped, or continued) but to do so without blocking.
+
+## 2. Masking Signals and Deferring Handlers
+
+### Example: job list
+
+```c
+static void reapProcesses(int sig) {
+  while (true) {
+    pid_t pid = waitpid(-1, NULL, WNOHANG);
+    if (pid <= 0) break;
+    printf("Job %d removed from job list.\n", pid);
+  }
+}
+
+char * const kArguments[] = {"date", NULL};
+int main(int argc, char *argv[]) {
+  signal(SIGCHLD, reapProcesses);
+  for (size_t i = 0; i < 3; i++) {
+    pid_t pid = fork();
+    if (pid == 0) execvp(kArguments[0], kArguments);
+    sleep(1); // force parent off CPU
+    printf("Job %d added to job list.\n", pid);
+  }
+  return 0;
+}
+```
+
+```console
+myth60$ ./job-list-broken
+Sun Jan 27 03:57:30 PDT 2019
+Job 27981 removed from job list.
+Job 27981 added to job list.
+Sun Jan 27 03:57:31 PDT 2019
+Job 27982 removed from job list.
+Job 27982 added to job list.
+Sun Jan 27 03:57:32 PDT 2019
+Job 27985 removed from job list.
+Job 27985 added to job list.
+myth60$ ./job-list-broken
+Sun Jan 27 03:59:33 PDT 2019
+Job 28380 removed from job list.
+Job 28380 added to job list.
+Sun Jan 27 03:59:34 PDT 2019
+Job 28381 removed from job list.
+Job 28381 added to job list.
+Sun Jan 27 03:59:35 PDT 2019
+Job 28382 removed from job list.
+Job 28382 added to job list.
+myth60$
+```
+Even if the `sleep(1)` is removed, it's possible that the child executes date, exits, and forces the parent to execute its SIGCHLD handler before the parent gets to its own printf. The fact that it's possible means we have a concurrency issue.
+
+We need some way to block reapProcesses from running until it's safe or sensible to do so. Restated, we'd like to postpone reapProcesses from executing until the parent's printf has returned.
+
+The kernel provides directives that allow a process to temporarily ignore signal delivery. The subset of directives that interest us are presented below:
+```c
+int sigemptyset(sigset_t *set);
+int sigaddset(sigset_t *additions, int signum);
+int sigprocmask(int op, const sigset_t *delta, sigset_t *existing);
+```
+
+* `sigset_t` type is a small primitive—usually a 32-bit, unsigned integer—that's used as a bit vector of length 32. Since there are just under 32 signal types, the presence or absence of signums can be captured via an ordered collection of 0's and 1's.
+* `sigemptyset` is used to initialize the sigset_t at the supplied address to be the empty set of signals. We generally ignore the return value.
+* `sigaddset` is used to ensure the supplied signal number, if not already present, gets added to the set addressed by additions. Again, we generally ignore the return value.
+* `sigprocmask` adds (if op is set to SIG_BLOCK) or removes (if op is set to SIG_UNBLOCK) the signals reachable from delta to/from the set of signals being ignored at the moment. The third argument is the location of a sigset_t that can be updated with the set of signals being blocked at the time of the call. Again, we generally ignore the return value.
+
+```c
+// imposes a block on SIGCHLDs:
+static void imposeSIGCHLDBlock() {
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGCHLD);
+  sigprocmask(SIG_BLOCK, &set, NULL);
+}
+// lifts the block on the signals packaged within the supplied vector:
+static void liftSignalBlocks(const vector<int>& signums) {
+  sigset_t set;
+  sigemptyset(&set);
+  for (int signum: signums) sigaddset(&set, signum);
+  sigprocmask(SIG_UNBLOCK, &set, NULL);
+}
+```
+
+The example code becomes:
+```c
+// job-list-fixed.c
+char * const kArguments[] = {"date", NULL};
+int main(int argc, char *argv[]) {
+  signal(SIGCHLD, reapProcesses);
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGCHLD);
+  for (size_t i = 0; i < 3; i++) {
+    sigprocmask(SIG_BLOCK, &set, NULL);
+    pid_t pid = fork();
+    if (pid == 0) {
+      sigprocmask(SIG_UNBLOCK, &set, NULL); // if not and if execvp called a process with child process, it becomes problem.
+      execvp(kArguments[0], kArguments);
+    }
+    sleep(1); // force parent off CPU
+    printf("Job %d added to job list.\n", pid);
+    sigprocmask(SIG_UNBLOCK, &set, NULL); // now unblock child in parent.
+  }
+  return 0;
+}
+```
+```console
+myth60$ ./job-list-fixed
+Sun Jan 27 05:16:54 PDT 2019
+Job 3522 added to job list.
+Job 3522 removed from job list.
+Sun Jan 27 05:16:55 PDT 2019
+Job 3524 added to job list.
+Job 3524 removed from job list.
+Sun Jan 27 05:16:56 PDT 2019
+Job 3527 added to job list.
+Job 3527 removed from job list.
+myth60$ ./job-list-fixed
+Sun Jan 27 05:17:15 PDT 2018
+Job 4677 added to job list.
+Job 4677 removed from job list.
+Sun Jan 27 05:17:16 PDT 2018
+Job 4691 added to job list.
+Job 4691 removed from job list.
+Sun Jan 27 05:17:17 PDT 2018
+Job 4692 added to job list.
+Job 4692 removed from job list.
+myth60$
+```
+date runs and finishes, so SIGCHLD arise but it's blocked so reapProcesses is blocked. printf in parent returns, and parent unblocks SIGCHLD so printf in reapProcesses returns.
+
+
+## 3. kill and raise
+
+Processes can message other processes using signals via the kill system call. And processes can even send themselves signals using raise.
+
+```c
+int kill(pid_t pid, int signum);
+int raise(int signum); // equivalent to kill(getpid(), signum);
+```
+
+Unlike the name, it just sends message. So named, because the default action of most signals in early UNIX implementations was to just terminate the target process. 
+
+
+# Lecture 08: Race Conditions, Deadlock, and Data Integrity
+
+
+
+
+
+
+
+
+
