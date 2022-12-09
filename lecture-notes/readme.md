@@ -377,7 +377,7 @@ myth60$
 
 ## execvp
 
-execvp effectively reboots a process to run a different program from scratch. Here is the prototype:
+execvp systemcall effectively reboots a process to run a different program from scratch. Here is the prototype:
 ```c
 int execvp(const char *path, char *argv[]);
 ```
@@ -422,3 +422,207 @@ int main(int argc, char *argv[]) {
 ```
 Why not call execvp inside parent and forgo the child process altogether? Because
 execvp would consume the calling process(what 'cannibalize' means above), and that's not what we want.
+
+\* fgets is a somewhat overflow-safe variant on scanf that knows to read everything up through and including the newline character.
+
+
+# Lecture 06: execvp, Pipes, and Interprocess Communication
+
+## 1. Simple shell using execvp
+
+Let's work through the implementation of a more sophisticated shell: the simplesh. simplesh operates as a read-eval-print loop (`repl`) which itself responds to the many things we type in by forking off child processes.
+
+Advanced from the example from last lecture, it needs to implement this feature of the shell:
+```console
+myth$ cat <<EOF | tee ./annoying.sh
+while [ 1 ]; do echo "are you annoyed yes?"; sleep 1; done
+EOF
+
+myth$ ./annoying.sh
+myth$ <!-- make the process background -->
+myth$ ^z
+myth$ bg
+myth$ <!-- make the process foreground -->
+myth$ fg
+myth$ ^c
+```
+or,
+```bash
+myth$ <!-- & makes it background -->
+myth$ while [ 1 ]; do echo "are you annoyed yes?"; sleep 1; done &
+myth$ 
+myth$ fg
+myth$ ^c
+```
+Implementation of simplesh is presented below. Where helper functions don't rely on CS110 concepts, omitted their implementations. (not all features of above are presented.)
+
+```c
+int main(int argc, char *argv[]) {
+  while (true) {
+    char command[kMaxCommandLength + 1];
+    readCommand(command, kMaxCommandLength);
+    char *arguments[kMaxArgumentCount + 1];
+    int count = parseCommandLine(command, arguments, kMaxArgumentCount);
+    if (count == 0) continue;
+    if (strcmp(arguments[0], "quit") ==) break; // hardcoded builtin to exit shell
+    bool isbg = strcmp(arguments[count - 1], "&") == 0;
+    if (isbg) arguments[--count] = NULL; // overwrite "&"
+    pid_t pid = fork();
+    if (pid == 0) execvp(arguments[0], arguments);
+    if (isbg) { // background process, don't wait for child to finish
+      printf("%d %s\n", pid, command);
+    } else {    // otherwise block until child process is complete
+      waitpid(pid, NULL, 0);
+    }
+  }
+  printf("\n");
+  return 0;
+}
+```
+
+## 2. pipe: ipc
+
+```c
+int pipe(int fds[]);
+```
+
+The pipe system call takes an uninitialized array of two integers—let’s call it fds—and populates it with two file descriptors such that everything written to `fds[1]` can be read from `fds[0]`.
+
+pipe is particularly useful for allowing parent processes to communicate with spawned child processes. That's because the file descriptor table of the parent is cloned, and that clone is installed in the child. That means the open file table entries references by the parent's pipe endpoints are also referenced by the child's copies of them.
+
+### Example
+
+```c
+int main(int argc, char *argv[]) {
+  int fds[2];  // 0 is reader, 1 is writer. (remember opcode)
+  pipe(fds);  // makes a new pipe.
+  pid_t pid = fork();
+  if (pid == 0) {  // child
+    close(fds[1]);  // since child will read, close writer for child.
+    char buffer[6];
+    read(fds[0], buffer, sizeof(buffer));  // read blocks until read. (continues if input file ended - so close file in parent! - but even if you forgot, system will take care of that.)
+    printf("Read from pipe bridging processes: %s.\n", buffer);
+    close(fds[0]);
+    return 0;
+  }
+  close(fds[0]);  // since parent will write, close reader for parent.
+  write(fds[1], "hello", 6);
+  waitpid(pid, NULL, 0);  // should wait until child reader finish.
+  close(fds[1]);
+  return 0;
+}
+```
+
+## 3. dup2
+
+The dup system call creates a copy of a file descriptor.
+```c
+int dup(int oldfd);
+int dup2(int oldfd, int newfd);
+```
+dup works like
+```c
+int copy_desc = dup(file_desc);
+```
+while dup2 works like
+```c
+dup2(file_desc, 1); 
+```
+The dup2() system call is similar to dup() but the basic difference between them is that instead of using the lowest-numbered unused file descriptor, it uses the descriptor number specified by the user. If the descriptor newfd was previously open, it is silently closed before being reused.
+
+### Example: subprocess
+
+Rather than waiting for command to finish, subprocess returns a subprocess_t with the command process’s pid and a single descriptor called supplyfd. By design, arbitrary text can be published to the return value’s supplyfd field with the understanding that that same data can be ingested verbatim by the child's stdin.
+```c
+typedef struct {
+  pid_t pid;
+  int supplyfd;
+} subprocess_t;
+subprocess_t subprocess(const char *command);
+
+subprocess_t subprocess(const char *command) {
+  int fds[2];
+  pipe(fds);
+  subprocess_t process = { fork(), fds[1] };
+  if (process.pid == 0) { // child
+    close(fds[1]); // no writing necessary
+    dup2(fds[0], STDIN_FILENO);  // injected words can be read with STDIN in child
+    close(fds[0]); // already duplicated to STDIN_FILENO.
+    char *argv[] = {"/bin/sh", "-c", (char *) command, NULL};
+    execvp(argv[0], argv);
+  }
+  close(fds[0]); // no reading from parent
+  return process;
+}
+
+int main(int argc, char *argv[]) {
+  subprocess_t sp = subprocess("/usr/bin/sort");  // sort will print to STDOUT
+  const char *words[] = {
+    "felicity", "umbrage", "susurration", "halcyon", 
+    "pulchritude", "ablution", "somnolent", "indefatigable"
+  };
+  for (size_t i = 0; i < sizeof(words)/sizeof(words[0]); i++) {
+    dprintf(sp.supplyfd, "%s\n", words[i]);  // inject words to writer from parent
+  }
+  close(sp.supplyfd);  // this is important. if not closed, sort process will wait forever.
+  int status;
+  pid_t pid = waitpid(sp.pid, &status, 0);
+  return pid == sp.pid && WIFEXITED(status) ? WEXITSTATUS(status) : -127;
+}
+```
+```console
+cgregg@myth60$ ./subprocess 
+ablution
+felicity
+halcyon
+indefatigable
+pulchritude
+somnolent
+susurration
+umbrage
+cgregg@myth60$
+```
+
+And that's how something like `cat unsorted.txt | sort` works.
+
+## 4. Signals
+
+A signal is a small message that notifies a process that an event of some type occurred. Signals are often sent by the kernel, but they can be sent from other processes as well.
+
+### Signal Examples
+
+You haven't truly programmed in C before unless you've unintentionally dereferenced a NULL pointer. When that happens, the kernel delivers a signal of type `SIGSEGV`, informally known as a segmentation fault (or a SEGmentation Violation, or SIGSEGV, for short). Unless you install a custom signal handler to manage the signal differently, a SIGSEGV terminates the program and generates a core dump.
+
+Whenever a process commits an integer-divide-by-zero (and, in some cases, a floating-point divide by zero on older architectures), the kernel hollers and issues a `SIGFPE` signal to the offending process. By default, the program handles the SIGFPE by printing an error message announcing the zero denominator and generating a core dump.
+
+When you type ctrl-c, the kernel sends a `SIGINT` to the foreground process (and by default, that foreground is terminated).
+
+When you type ctrl-z, the kernel issues a `SIGTSTP` to the foreground process (and by default, the foreground process is halted until a subsequent `SIGCONT` signal instructs it to continue).
+
+When a process attempts to publish data to the write end of a pipe after the read end has been closed, the kernel delivers a `SIGPIPE` to the offending process. The default SIGPIPE handler prints a message identifying the pipe error and terminates the program.
+
+Whenever a child process changes state—that is, it exits, crashes, stops, or resumes from a stopped state, the kernel sends a `SIGCHLD` signal to the process's parent. By default, the signal is ignored. In fact, we've ignored it until right now and gotten away with it. The parent process, however, is still required to reap child processes, so the parent will typically register a custom SIGCHLD handler to be asynchronously invoked whenever a child process changes state. Custom SIGCHLD handlers almost always include calls to waitpid, which can be used to surface the pids of child processes that've changed state. If the child process of interest actually terminated, either normally or abnormally, the waitpid also culls the zombie the relevant child process has become.
+
+```c
+#include <signal.h>     // for signal
+
+static const size_t kNumChildren = 5;
+static size_t numDone = 0;
+
+static void reapChild(int unused) {
+  waitpid(-1, NULL, 0);
+  numDone++;
+}
+
+int main(int argc, char *argv[]) {
+  printf("Let my five children play while I take a nap.\n");
+  // if some SIGCHLD, readpChild is evoked.
+  signal(SIGCHLD, reapChild); 
+  for (size_t kid = 1; kid <= 5; kid++) {
+    if (fork() == 0) {
+      sleep(3 * kid); // sleep emulates "play" time
+      printf("Child #%zu tired... returns to dad.\n", kid);
+      return 0;
+    }
+  }
+```
