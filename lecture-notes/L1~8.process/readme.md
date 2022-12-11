@@ -974,8 +974,23 @@ static void waitForForegroundProcess(pid_t pid) {
 ## 2. Example Problem
 ![race_example](img/race_example.PNG)
 
-for third one, if parent process already printed ninja, kill syscall had been evoked, so ghost can never be printed
+for third one, if parent process already printed ninja, kill syscall has sent signal to the child. Assume that if that signal was slow, and child could print ghost. But then, signal handler must print pirate.
 
-![race_example](img/race_example2.PNG)
+![race_example2](img/race_example2.PNG)
 
 easy if you draw a diagram.
+
+![race_example3](img/race_example3.PNG)
+
+this one's even easier.
+```console
+counter = 1
+counter = 10
+counter = 1001
+```
+```console
+counter = 1
+counter = 1001
+```
+no.
+
