@@ -304,7 +304,7 @@ Child exited with status 110.
 myth60$
 ```
 
-The waitpid call also donates child process-oriented resources back to the system. So you should use waitpid for every process using fork.
+**The waitpid call also donates child process-oriented resources back to the system.** So you should use waitpid for every process using fork.
 
 [See here](https://www.ibm.com/docs/en/zos/2.4.0?topic=functions-waitpid-wait-specific-child-process-end) for macros like `WIFEXITED`.
 
@@ -479,6 +479,9 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 ```
+<p align="center">
+Code 1: simple shell - bg
+</p>
 
 ## 2. pipe: ipc
 
@@ -684,8 +687,10 @@ A return value by waitpid of 0 means there are other child processes, and we wou
 
 The third argument supplied to waitpid can include several flags bitwise-or'ed together. [see here](https://stackoverflow.com/questions/33508997/waitpid-wnohang-wuntraced-how-do-i-use-these) for more information.
 
-* `WUNTRACED` informs waitpid to block until some child process has either ended or been stopped (paused).
-* `WCONTINUED` informs waitpid to block until some child process has either ended or resumed from a stopped state.
+* 0 - wait on a child to be ended
+* `WUNTRACED` - also wait on a child to be stopped (paused).
+* `WCONTINUED` - also wait on a child to be continued (resumed).
+* `WNOHANG` - don't block
 * `WUNTRACED | WCONTINUED | WNOHANG` asks that waitpid return information about a child process that has changed state (i.e. exited, crashed, stopped, or continued) but to do so without blocking.
 
 ## 2. Masking Signals and Deferring Handlers
@@ -828,16 +833,149 @@ int kill(pid_t pid, int signum);
 int raise(int signum); // equivalent to kill(getpid(), signum);
 ```
 
-Unlike the name, it just sends message. So named, because the default action of most signals in early UNIX implementations was to just terminate the target process. 
+Unlike the name, it just sends message. So named, because the default action of most signals in early UNIX implementations was to just terminate the target process. (using SIGKILL)
 
 
 # Lecture 08: Race Conditions, Deadlock, and Data Integrity
 
 
+## 1. Simple shell (revisited)
 
+In [Code 1: simple shell - bg], we can see that background processes are left as zombies for the lifetime of the shell.
 
+```c
+static pid_t fgpid = 0; // global, intially 0, and 0 means no foreground process           
+static void reapProcesses(int sig) {
+  while (true) {
+    pid_t pid = waitpid(-1, NULL, WNOHANG);
+    if (pid <= 0) break;
+    if (pid == fgpid) fgpid = 0; // clear foreground process
+  }
+}
 
+static void waitForForegroundProcess(pid_t pid) {
+  fgpid = pid;
+  while (fgpid == pid) {;}
+}
 
+int main(int argc, char *argv[]) {
+  signal(SIGCHLD, reapProcesses);
+  while (true) {
+    // code to initialize command, argv, and isbg omitted for brevity
 
+    pid_t pid = fork();
+    if (pid == 0) execvp(arguments[0], arguments);
+    if (isbg) { // background process, don't wait for child to finish
+      printf("%d %s\n", pid, command);
+    } else {    // otherwise block until child process is complete
+      waitForForegroundProcess(pid);
+    }
+  }
+  printf("\n");
+  return 0;
+}
+```
 
+* Notice that `waitpid` command in forground process is changed too. When the SIGCHLD handler exits, normal execution resumes, and the original call to waitpid returns -1 to state that there is no trace of a process with the supplied pid. The waitpid call is redundant and replicates functionality better managed in the SIGCHLD handler. So it's changed because we should only be calling waitpid in one place: the SIGCHLD handler.
 
+* Now waitpid for all process will be evoked so there will be no zombie process. But some problems left:
+  * It's possible the foreground process finishes and reapProcesses is invoked on its behalf before normal execution flow updates fgpid. If that happens, the shell will spin forever and never advance up to the shell prompt. This is a race condition, and race conditions are no-nos.
+  * The while (fgpid == pid) {;} is also a no-no. This allows the shell to spin on the CPU even when it can't do any meaningful work. It would be substantially better for simplesh to yield the CPU and to only be considered for CPU time when there's a chance the foreground process has exited.
+
+The race condition can be cured by blocking SIGCHLD before forking, and only lifting that block after the global fgpid has been set.
+```c
+static void toggleSIGCHLDBlock(int how) {
+  sigset_t mask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGCHLD);
+  sigprocmask(how, &mask, NULL);
+}
+
+void blockSIGCHLD() {
+  toggleSIGCHLDBlock(SIG_BLOCK);
+}
+
+void unblockSIGCHLD() {
+  toggleSIGCHLDBlock(SIG_UNBLOCK);
+}
+
+static void waitForForegroundProcess(pid_t pid) {
+  fgpid = pid;
+  unblockSIGCHLD(); // lift only after fgpid has been set
+  while (fgpid == pid) {;}
+}
+
+int main(int argc, char *argv[]) {
+  signal(SIGCHLD, reapProcesses);
+  while (true) {
+    // code to initialize command, argv, and isbg omitted for brevity                                                                                        
+    blockSIGCHLD();
+    pid_t pid = fork();
+    if (pid == 0) { 
+      unblockSIGCHLD(); 
+      execvp(argv[0], argv); 
+    }
+    if (isbg) {
+      printf("%d %s\n", pid, command);
+      unblockSIGCHLD();
+    } else {
+      waitForForegroundProcess(pid);                   
+    }
+  }
+}
+
+```
+So how we solve the CPU spin issue? One might do like `while (fgpid == pid) {usleep(100000);}` but we'd really prefer to keep the shell off the CPU until the OS has some information suggesting the foreground process is done.
+
+The C libraries provide a `pause` function, which forces the process to sleep until some unblocked signal arrives. This sounds promising, because we know fgpid can only be changed because a SIGCHLD signal comes in and reapProcesses is executed.
+
+```c
+// deadlock
+static void waitForForegroundProcess(pid_t pid) {
+  fgpid = pid;
+  unblockSIGCHLD();
+  while (fgpid == pid) {
+    pause();
+  }
+}
+```
+The problem here? `SIGCHLD` may arrive after `fgpid == pid` evaluates to true but before the call to `pause` it's committed to. That would be unfortunate, because it's possible simplesh isn't managing any other processes, which means that no other signals, much less SIGCHLD signals, will arrive to lift simplesh out of its pause call. That would leave simplesh in a state of deadlock. (pause is waiting for the process signal, process is waiting for the pause to return)
+
+One might think unblock and block might help.
+```c               
+// deadlock                                                        
+static void waitForForegroundProcess(pid_t pid) {
+  fgpid = pid;
+  while (fgpid == pid) {
+    unblockSIGCHLD();
+    pause();
+    blockSIGCHLD();
+  }
+  unblockSIGCHLD();
+}
+```
+but this has the same problem.
+
+The main problem with both versions is that each lifts the block on SIGCHLD before going to sleep via pause.
+
+The solution is to rely on a more specialized version of pause called `sigsuspend`, which asks that the OS change the blocked set to the one provided, but only after the caller has been forced off the CPU. When some unblocked signal arrives, the process gets the CPU, the signal is handled, the original blocked set is restored, and sigsuspend returns. [description](https://man7.org/linux/man-pages/man2/sigsuspend.2.html)
+```c
+static void waitForForegroundProcess(pid_t pid) {
+  fgpid = pid;
+  sigset_t empty;
+  sigemptyset(&empty);  // no block
+  while (fgpid == pid) {
+    sigsuspend(&empty);  // SIGCHLD is already blocked, so this means we push `pause` to the cpu first, then unblock the SIGCHLD. if pause finishes, it blocks SIGCHLD again.
+  }
+  unblockSIGCHLD();
+}
+```
+
+## 2. Example Problem
+![race_example](img/race_example.PNG)
+
+for third one, if parent process already printed ninja, kill syscall had been evoked, so ghost can never be printed
+
+![race_example](img/race_example2.PNG)
+
+easy if you draw a diagram.
