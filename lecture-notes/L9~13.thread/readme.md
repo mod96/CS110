@@ -262,6 +262,8 @@ Agent #102 sold a ticket! (4294967293 more to be sold).
 Agent #101 sold a ticket! (4294967292 more to be sold).
 // carries on for a very, very, very long time
 ```
+* [std::ref](https://cplusplus.com/reference/functional/ref/)
+  
 **First Problem:**
 If a thread evaluates remainingTickets > 0 to be true and commits to selling a ticket, the ticket might not be there by the time it executes the decrement. That's because the thread may be swapped off the
 CPU after the decision to sell
@@ -284,7 +286,7 @@ g++ on the myths compiles `remainingTickets--` to five assembly code instruction
 0x0000000000401aa8 <+49>:    mov    %edx,(%rax)
 ```
 
-One solution: provide a directive that allows a thread to ask that it not be swapped off the CPU while it's within a block of code that should be executed transactionally. (hardware lock) **That, however, is not an option, and shouldn't be.** That would grant too much power to threads, which could abuse the option and block other threads from running for an indeterminate amount of time.
+One solution: provide a directive that allows a thread to ask that it not be swapped off the CPU while it's within a block of code that should be executed transactionally. **That, however, is not an option, and shouldn't be.** That would grant too much power to threads, which could abuse the option and block other threads from running for an indeterminate amount of time.
 
 The other option is to rely on a concurrency directive that can be used to prevent more than one thread from being anywhere in the same critical region at one time. That concurrency directive is the mutex, and in C++ it looks like this:
 ```cc
@@ -352,3 +354,248 @@ static void ticketAgent(size_t id, size_t& remainingTickets, mutex& ticketsLock)
 This is much faster. Now, we allow each agent to grab an available ticket, but they must sell it! If an agent did not sell the ticket, some other agents might go home early. But, that might be okay for our model.
 
 So, **don't wrap around the code that doesn't matter with the lock!**
+
+
+
+
+
+# Lecture 11: Multithreading, Condition Variables, and Semaphores
+
+## Dining Philosophers Problem
+
+![dpp](img/dpp.png)
+
+Five philosophers sit around a table, each in front of a big plate of spaghetti. Each philosopher comes to the table to think, eat, think, eat, think, and eat. That's three square meals of spaghetti after three extended think sessions. In order to eat, he must grab hold of two forks—one on his left, then one on his right. We can see that maximum 2 philosophers can eat at the same time.
+
+### version1 : deadlock
+```cc
+static void think(size_t id) {
+  cout << oslock << id << " starts thinking." << endl << osunlock;
+  sleep_for(getThinkTime());
+  cout << oslock << id << " all done thinking. " << endl << osunlock;
+}
+
+static void eat(size_t id, mutex& left, mutex& right) {
+  left.lock();
+  right.lock();
+  cout << oslock << id << " starts eating om nom nom nom." << endl << osunlock;
+  sleep_for(getEatTime());
+  cout << oslock << id << " all done eating." << endl << osunlock;
+  left.unlock();
+  right.unlock();
+}
+
+static void philosopher(size_t id, mutex& left, mutex& right) {
+  for (size_t i = 0; i < 3; i++) {
+    think(id);
+    eat(id, left, right);
+  }
+}
+
+int main(int argc, const char *argv[]) {
+  mutex forks[kNumForks];
+  thread philosophers[5];
+  for (size_t i = 0; i < 5; i++) {
+    mutex& left = forks[i], & right = forks[(i + 1) % 5];
+    philosophers[i] = thread(philosopher, i, ref(left), ref(right));
+  }
+  for (thread& p: philosophers) p.join();
+  return 0;
+}
+```
+If, everyone successfully grabs the fork to his left, and is then forced off the processor because his time slice is up, each would be stuck waiting for a second fork to become available. That's a real deadlock threat. It really happens in high chance if we slip `sleep_for` between `left.lock()` and `right.lock()`.
+
+When coding with threads, you need to ensure that:
+* there are no race conditions, even if they rarely cause problems.
+* there's zero threat of deadlock, lest a subset of threads are forever starving for processor time.
+
+Deadlock can be programmatically prevented by implanting directives to limit the number of threads competing for a shared resource, like forks. We could, for instance, recognize it's impossible for three philosophers to be eating at the same time. That means we could limit the number of philosophers who have permission to grab forks to a mere 2. We could also argue it's okay to let four—though certainly not all five—philosophers grab forks, knowing that at least one will successfully grab both.
+
+Here's the core of a program that limits the number of philosophers grabbing forks to four: Before grabbing forks, a philosopher must first acquire one of four permission slips.
+
+### version2 : busy waiting
+```cc
+static void waitForPermission(size_t& permits, mutex& permitsLock) {
+  while (true) {
+    permitsLock.lock();
+    if (permits > 0) break;
+    permitsLock.unlock();
+    sleep_for(10);
+  }
+  permits--;
+  permitsLock.unlock();
+}
+
+static void grantPermission(size_t& permits, mutex& permitsLock) {
+  permitsLock.lock();
+  permits++;
+  permitsLock.unlock();
+}
+
+static void eat(size_t id, mutex& left, mutex& right, 
+                size_t& permits, mutex& permitsLock) {
+  waitForPermission(permits, permitsLock); // on next slide
+  left.lock(); right.lock();
+  cout << oslock << id << " starts eating om nom nom nom." << endl << osunlock;
+  sleep_for(getEatTime());
+  cout << oslock << id << " all done eating." << endl << osunlock;
+  grantPermission(permits, permitsLock); // on next slide
+  left.unlock(); right.unlock();
+}
+
+static void philosopher(size_t id, mutex& left, mutex& right,
+                        size_t& permits, mutex& permitsLock) {
+  for (size_t i = 0; i < kNumMeals; i++) {
+    think(id);
+    eat(id, left, right, permits, permitsLock);
+  }
+}
+
+int main(int argc, const char *argv[]) {
+  size_t permits = 4;
+  mutex forks[5], permitsLock;
+  thread philosophers[5];
+  for (size_t i = 0; i < 5; i++) {
+    mutex& left = forks[i],
+         & right = forks[(i + 1) % 5];
+    philosophers[i] = 
+        thread(philosopher, i, ref(left), ref(right), ref(permits), ref(permitsLock));
+  }
+  for (thread& p: philosophers) p.join();
+  return 0;
+}
+```
+The second version of the program works, in the sense that it never deadlocks.
+It does, however, suffer from busy waiting, which the systems programmer gospel says is verboten unless there are no other options.
+
+If a philosopher doesn't have permission to advance, then that thread should sleep until another thread sees reason to wake it up. In this example, another philosopher thread, after it increments permits within grantPermission, could notify the sleeping thread that a permit just became available.
+
+Implementing this idea requires a more sophisticated concurrency directive that supports a different form of thread communication—one akin to the use of signals and sigsuspend to support communication between processes. Fortunately, C++ provides a standard directive called the condition_variable_any to do exactly this.
+
+```cc
+class condition_variable_any {
+public:
+   void wait(mutex& m);
+   template <typename Pred> void wait(mutex& m, Pred pred);
+   void notify_one();
+   void notify_all();
+};
+```
+* [std::condition_variable_any](https://en.cppreference.com/w/cpp/thread/condition_variable_any)
+
+### version3 : condition_variable_any
+```cc
+static void waitForPermission(size_t& permits, condition_variable_any& cv, mutex& m) {
+  lock_guard<mutex> lg(m); // constructor: lock, destructor: unlock
+  while (permits == 0) cv.wait(m);
+  permits--;
+}
+
+static void grantPermission(size_t& permits, condition_variable_any& cv, mutex& m) {
+  lock_guard<mutex> lg(m);
+  permits++;
+  if (permits == 1) cv.notify_all(); // actually condition is not necessary.
+}
+
+// other functions are similar to before. except new parameter.
+
+int main(int argc, const char *argv[]) {
+  size_t permits = 4;
+  mutex forks[5], m;
+  condition_variable_any cv;
+  thread philosophers[5];
+  for (size_t i = 0; i < 5; i++) {
+    mutex& left = forks[i], & right = forks[(i + 1) % 5];
+    philosophers[i] = 
+       thread(philosopher, i, ref(left), ref(right), ref(permits), ref(cv), ref(m));
+  }
+  for (thread& p: philosophers) p.join();
+  return 0;
+}
+```
+what `cv.wait(m)` does:
+
+1) Atomically unlocks lock, blocks the current executing thread, and adds it to the list of threads waiting on *this. 
+2) The thread will be unblocked when notify_all() or notify_one() is executed.
+3) When unblocked, regardless of the reason, lock is reacquired (try to lock) and wait exits. (if lock is acquired)
+
+Or, by using
+```cc
+template <Predicate pred>
+void condition_variable_any::wait(mutex& m, Pred pred) {
+  while (!pred()) wait(m);
+}
+```
+that while loop in `waitForPermission` can be written as:
+```cc
+static void waitForPermission(size_t& permits, condition_variable_any& cv, mutex& m) {
+  lock_guard<mutex> lg(m);
+  cv.wait(m, [&permits] { return permits > 0; });
+  permits--;
+}
+
+```
+
+Fundamentally, the size_t, condition_variable_any, and mutex are collectively working together to track a resource count. The idea of maintaining a thread-safe, generalized counter is so useful that most programming languages include more generic support for it. That support normally comes under the name of a semaphore.
+
+`semaphore::wait` is our generalization of `waitForPermission`. (semaphore is in cpp since c++20, and this illustration is professor's implementation.)
+
+```cc
+void semaphore::wait() {
+  lock_guard<mutex> lg(m);
+  cv.wait(m, [this] { return value > 0; })
+  value--;
+}
+```
+* Why does the capture clause include the this keyword?
+  * Because the anonymous predicate function passed to `cv.wait` is just that—a regular function. Since functions aren't normally entitled to examine the private state of an object, the capture clause includes this to effectively convert the bool-returning function into a bool-returning semaphore method.
+
+`semaphore::signal` is our generalization of `grantPermission`.
+
+```cc
+void semaphore::signal() {
+  lock_guard<mutex> lg(m);
+  value++;
+  if (value == 1) cv.notify_all();
+}
+```
+
+
+### version4 : Semaphore
+```cc
+static void eat(size_t id, mutex& left, mutex& right, semaphore& permits) {
+  permits.wait();
+  left.lock();
+  right.lock();
+  cout << oslock << id << " starts eating om nom nom nom." << endl << osunlock;
+  sleep_for(getEatTime());
+  cout << oslock << id << " all done eating." << endl << osunlock;
+  permits.signal();
+  left.unlock();
+  right.unlock();
+}
+
+static void philosopher(size_t id, mutex& left, mutex& right, semaphore& permits) {
+  for (size_t i = 0; i < 3; i++) {
+    think(id);
+    eat(id, left, right, permits);
+  }
+}
+
+int main(int argc, const char *argv[]) {
+  semaphore permits(4);
+  mutex forks[5];
+  thread philosophers[5];
+  for (size_t i = 0; i < 5; i++) {
+    mutex& left = forks[i], & right = forks[(i + 1) % 5];
+    philosophers[i] = thread(philosopher, i, ref(left), ref(right), ref(permits));
+  }
+  for (thread& p: philosophers) p.join();
+  return 0;
+}
+```
+
+# Lecture 12: More on Multithreading, CVs, and Semaphores
+
+
+
