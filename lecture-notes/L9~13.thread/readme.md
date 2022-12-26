@@ -598,4 +598,151 @@ int main(int argc, const char *argv[]) {
 # Lecture 12: More on Multithreading, CVs, and Semaphores
 
 
+## Zero, Negative semaphore
 
+What about a negative initializer for a semaphore?
+```cc
+semaphore permits(-9);
+```
+In this case, the semaphore would have to reach 1 before the wait would stop waiting. You might want to wait until a bunch of threads finished before a final thread is allowed to continue. 
+
+```cc
+void writer(int i, semaphore &s) {
+    cout << oslock << "Sending signal " << i << endl << osunlock;
+    s.signal();
+}
+
+void read_after_ten(semaphore &s) {
+    s.wait();
+    cout << oslock << "Got enough signals to continue!" << endl << osunlock;
+}
+
+int main(int argc, const char *argv[]) {
+    semaphore negSemaphore(-9);
+    thread readers[10];
+    for (size_t i = 0; i < 10; i++) {
+        readers[i] = thread(writer, i, ref(negSemaphore));
+    }
+    thread r(read_after_ten, ref(negSemaphore));
+    for (thread &t : readers) t.join();
+    r.join();
+    return 0;
+}
+```
+
+`semaphore::wait` and `semaphore::signal` can be leveraged to support a different form of communication: **thread rendezvous**. Thread rendezvous is a generalization of `thread::join`. It allows one thread to stall—via `semaphore::wait`—until another thread calls `semaphore::signal`, often because the signaling thread just prepared some data that the waiting thread needs before it can continue.
+
+The program has two meaningful threads of execution: one thread publishes content to a shared buffer, and a second reads that content as it becomes available.
+
+## Reader-Writer: Confused
+
+```cc
+static void writer(char buffer[]) {
+  cout << oslock << "Writer: ready to write." << endl << osunlock;
+  for (size_t i = 0; i < 320; i++) { // 320 is 40 cycles around the circular buffer of length 8
+    char ch = prepareData();
+    buffer[i % 8] = ch;
+    cout << oslock << "Writer: published data packet with character '" 
+         << ch << "'." << endl << osunlock;
+  }
+}
+
+static void reader(char buffer[]) {
+  cout << oslock << "\t\tReader: ready to read." << endl << osunlock;
+  for (size_t i = 0; i < 320; i++) { // 320 is 40 cycles around the circular buffer of length 8 
+    char ch = buffer[i % 8];
+    processData(ch);
+    cout << oslock << "\t\tReader: consumed data packet " << "with character '" 
+         << ch << "'." << endl << osunlock;
+  }
+}
+
+int main(int argc, const char *argv[]) {
+  char buffer[8];
+  thread w(writer, buffer);
+  thread r(reader, buffer);
+  w.join();
+  r.join();
+  return 0;
+}
+
+```
+Each thread runs more or less independently of the other, without consulting the other to see how much progress it's made. In particular, there's nothing in place to inform the reader that the slot it wants to read from has meaningful data in it. It's possible the writer just hasn't gotten that far yet. Similarly, there's nothing preventing the writer from advancing so far ahead that it begins to overwrite content that has yet to be consumed by the reader.
+
+
+## Reader-Writer: two semaphores
+
+```cc
+static void writer(char buffer[], semaphore& full, semaphore& empty) {
+  cout << oslock << "Writer: ready to write." << endl << osunlock;
+  for (size_t i = 0; i < 320; i++) { // 320 is 40 cycles around the circular buffer of length 8
+    char ch = prepareData();
+    empty.wait();   // don't try to write to a slot unless you know it's empty                                                                                                         
+    buffer[i % 8] = ch;
+    full.signal();  // signal reader there's more stuff to read                                                                                                                        
+    cout << oslock << "Writer: published data packet with character '" 
+         << ch << "'." << endl << osunlock;
+  }
+}
+
+static void reader(char buffer[], semaphore& full, semaphore& empty) {
+  cout << oslock << "\t\tReader: ready to read." << endl << osunlock;
+  for (size_t i = 0; i < 320; i++) { // 320 is 40 cycles around the circular buffer of length 8
+    full.wait();    // don't try to read from a slot unless you know it's full                                                                                                         
+    char ch = buffer[i % 8];
+    empty.signal(); // signal writer there's a slot that can receive data                                                                                                              
+    processData(ch);
+    cout << oslock << "\t\tReader: consumed data packet " << "with character '" 
+         << ch << "'." << endl << osunlock;
+  }
+}
+
+int main(int argc, const char *argv[]) {
+  char buffer[8];
+  semaphore fullBuffers, emptyBuffers(8);
+  thread w(writer, buffer, ref(fullBuffers), ref(emptyBuffers));
+  thread r(reader, buffer, ref(fullBuffers), ref(emptyBuffers));
+  w.join();
+  r.join();
+  return 0;
+}
+```
+
+## Example: Myth-buster
+```cc
+static void countCS110Processes(int num, const unordered_set<string>& sunetIDs,
+                                map<int, int>& processCountMap, mutex& processCountMapLock, 
+                                semaphore& permits) {
+  int count = getNumProcesses(num, sunetIDs);
+  if (count >= 0) {
+    lock_guard<mutex> lg(processCountMapLock);
+    processCountMap[num] = count;
+    cout << "myth" << num << " has this many CS110-student processes: " << count << endl;
+  }
+  permits.signal(on_thread_exit); // signal when thread exits
+}
+
+static void compileCS110ProcessCountMap(const unordered_set<string> sunetIDs, 
+                                        map<int, int>& processCountMap) {  
+  vector<thread> threads;
+  mutex processCountMapLock;
+  semaphore permits(8); // limit the number of threads to the number of CPUs
+  for (int num = kMinMythMachine; num <= kMaxMythMachine; num++) {
+    permits.wait();
+    threads.push_back(thread(countCS110Processes, num, ref(sunetIDs),
+                             ref(processCountMap), ref(processCountMapLock), ref(permits)));
+  }
+  for (thread& t: threads) t.join(); // clean up
+}
+
+static const char *kCS110StudentIDsFile = "studentsunets.txt";
+int main(int argc, char *argv[]) {
+  unordered_set<string> cs110Students;
+  readStudentFile(cs110Students, argv[1] != NULL ? argv[1] : kCS110StudentIDsFile);
+  map<int, int> processCountMap;
+  compileCS110ProcessCountMap(cs110Students, processCountMap);
+  publishLeastLoadedMachineInfo(processCountMap);
+  return 0;
+}
+
+```
