@@ -746,3 +746,67 @@ int main(int argc, char *argv[]) {
 }
 
 ```
+
+
+
+# Lecture 13: An Ice Cream Store
+
+We are going to discuss five primary ideas:
+1) The binary lock
+   * Using a mutex, we construct a single-owner lock. mutex is unlocked and brackets critical regions of code that are matched with lock  and unlock calls on the mutex.
+2) A generalized counter
+   * When we use a semaphore, we can track the use of a resource, be it empty buffers, full buffers, available network connection, or what have you.
+3) A binary rendezvous
+   * The rendezvous semaphore is initialized to 0. When thread A gets to the point that it needs to know that another thread has made enough progress, it can wait on the rendezvous semaphore. After completing the necessary task, B will signal it.
+   * If you need a bidirectional rendezvous where both threads need to wait for the other, you can add another semaphore in the reverse direction (e.g. the wait and signal calls inverted).
+4) A generalized rendezvous
+   * The generalized rendezvous is a combination of binary rendezvous and generalized counter, where a single semaphore is used to record how many times something has occurred.
+   * For example, if thread A spawned 5 thread Bs and needs to wait for all of them make a certain amount of progress before advancing, a generalized rendezvous might be used. The generalized rendezvous is initialized to 0. When A needs to sync up with the others, it will call wait on the semaphore in a loop, one time for each thread it is syncing up with. If A gets to the rendezvous point before the threads have finished, it will block, waking to "count" each child as it signals and eventually move on when all dependent threads have checked back. If all the B threads finish before A arrives at the rendezvous point, it will quickly decrement the multiply-incremented semaphore, once for each thread, and move on without blocking.
+   * As with the generalized counter, it’s occasionally possible to use thread::join instead of semaphore::wait, but that requires the child threads fully exit before the joining parent is notified, and that’s not always what you want (though if it is, then join is just fine).
+5) Layered construction
+   * mutexes and semaphores can be layered and grouped into more complex constructions.
+
+Because we are modeling a "real" ice cream store, we want to randomize the times for each event. We also want to generate a boolean that says yay/nay about whether a cone is perfect. The following functions accomplished this task:
+```cc
+static mutex rgenLock;
+static RandomGenerator rgen;
+
+static unsigned int getNumCones() {
+  lock_guard<mutex> lg(rgenLock);
+  return rgen.getNextInt(kMinConeOrder, kMaxConeOrder);
+}
+
+static unsigned int getBrowseTime() {
+  lock_guard<mutex> lg(rgenLock);
+  return rgen.getNextInt(kMinBrowseTime, kMaxBrowseTime);
+}
+
+static unsigned int getPrepTime() {
+  lock_guard<mutex> lg(rgenLock);
+  return rgen.getNextInt(kMinPrepTime, kMaxPrepTime);
+}
+
+static unsigned int getInspectionTime() {
+  lock_guard<mutex> lg(rgenLock);
+  return rgen.getNextInt(kMinInspectionTime, kMaxInspectionTime);
+}
+
+static bool getInspectionOutcome() {
+  lock_guard<mutex> lg(rgenLock);
+  return rgen.getNextBool(kConeApprovalProbability);
+}
+```
+
+The first struct we will look at is the inspection struct:
+```cc
+struct inspection {
+  mutex available;
+  semaphore requested;
+  semaphore finished;
+  bool passed;
+} inspection;
+```
+This struct coordinates between the clerk and the manager.
+The `available` mutex ensures the manager's undivided attention, so the single manager can only inspect one cone cone at a time. The `requested` and `finished` semaphores coordinate a bi-directional rendezvous between the clerk and the manager. The `passed` bool provides the approval for a single cone.
+
+
