@@ -1,7 +1,0 @@
-{
-  "files.associations": {
-    "inode.h": "c",
-    "diskimg.h": "c",
-    "stdio.h": "c"
-  }
-}
