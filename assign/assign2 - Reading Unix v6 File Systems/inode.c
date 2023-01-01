@@ -37,7 +37,10 @@ int inode_iget(struct unixfilesystem *fs, int inumber, struct inode *inp)
  */
 int inode_indexlookup(struct unixfilesystem *fs, struct inode *inp, int blockNum)
 {
-	if ((inp->i_mode) & ILARG == 0)
+	// if blockNum exceeds filesize, error
+	if (blockNum * DISKIMG_SECTOR_SIZE >= inode_getsize(inp))
+		return -1;
+	if (((inp->i_mode) & ILARG) == 0)
 	{
 		return inp->i_addr[blockNum];
 	}
