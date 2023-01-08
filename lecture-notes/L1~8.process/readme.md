@@ -671,7 +671,7 @@ static void reapChild(int unused) {
   }
 }
 ```
-but then, if it is `sleep(3 * kid);`, dad doesn't wake up because signal handler is on the parent process and once it's evoked, another line of code cannot be executed until the signal handler returns. Signal handlers and the asynchronous interrupts that come with them mean that your normal execution flow can, in general, be interrupted at any time to handle signals.
+but then, if it is `sleep(3 * kid);`, dad doesn't wake up (until all children finishes) because signal handler is on the parent process and once it's evoked, another line of code cannot be executed until the signal handler returns. Signal handlers and the asynchronous interrupts that come with them mean that your normal execution flow can, in general, be interrupted at any time to handle signals.
 
 Finally it becomes:
 ```c
