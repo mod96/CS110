@@ -4,7 +4,7 @@
  * Defines all of the functions needed to parse system include and Linux kernel source files to
  * build a table of all system call numbers, names, and signatures.
  */
- 
+
 #include "trace-system-calls.h"
 #include <iostream>
 #include <fstream>
@@ -25,30 +25,48 @@ using namespace __gnu_cxx;
  * Self-exaplanatory.
  */
 
-ostream& operator<<(ostream& os, const scParamType& type) {
-  switch (type) {
-    case SYSCALL_INTEGER: os << "SYSCALL_INTEGER"; break;
-    case SYSCALL_STRING: os << "SYSCALL_STRING"; break;
-    case SYSCALL_POINTER: os << "SYSCALL_POINTER"; break;
-    default: os << "SYSCALL_UNKNOWN_TYPE"; break;
+ostream &operator<<(ostream &os, const scParamType &type)
+{
+  switch (type)
+  {
+  case SYSCALL_INTEGER:
+    os << "SYSCALL_INTEGER";
+    break;
+  case SYSCALL_STRING:
+    os << "SYSCALL_STRING";
+    break;
+  case SYSCALL_POINTER:
+    os << "SYSCALL_POINTER";
+    break;
+  default:
+    os << "SYSCALL_UNKNOWN_TYPE";
+    break;
   }
 
   return os;
 }
 
-istream& operator>>(istream& is, scParamType& type) {
+istream &operator>>(istream &is, scParamType &type)
+{
   std::string str;
   is >> str;
-  if (str == "SYSCALL_INTEGER") {
+  if (str == "SYSCALL_INTEGER")
+  {
     type = SYSCALL_INTEGER;
-  } else if (str == "SYSCALL_STRING") {
-    type = SYSCALL_STRING; 
-  } else if (str == "SYSCALL_POINTER") {
+  }
+  else if (str == "SYSCALL_STRING")
+  {
+    type = SYSCALL_STRING;
+  }
+  else if (str == "SYSCALL_POINTER")
+  {
     type = SYSCALL_POINTER;
-  } else {
+  }
+  else
+  {
     type = SYSCALL_UNKNOWN_TYPE;
   }
-  
+
   return is;
 }
 
@@ -67,7 +85,7 @@ static const string kUniversalStandardAbsoluteFilename = "/usr/include/x86_64-li
  * ----------------------------------------
  * Provides the regex pattern we use to identify those lines within kUniversalStandardAbsoluteFilename with
  * name -> number mappings for system calls.  The lines of interest all look like this:
- * 
+ *
  *   #define __NR_read 0
  *   #define __NR_write 1
  *   #define __NR_open 2
@@ -76,7 +94,7 @@ static const string kUniversalStandardAbsoluteFilename = "/usr/include/x86_64-li
  *
  * The regex pattern defined below is designed to match these five lives and all of the others structured just like it.
  * Breakdown on why we use [^_]+__NR_(\\w+)\\s+(\\d+)\\s*
- *    
+ *
  *     [^_]+ matches everything up through the very first underscore
  *     __NR_ matches precisely that: __NR_
  *     (\\w+) matches the cluster of letters, numbers, and underscores following __NR_.  This cluster is
@@ -108,22 +126,26 @@ static const string kSystemCallNumberDefinePattern = "[^_]+__NR_(\\w+)\\s+(\\d+)
  * Function: collectSystemCallNumbers
  * ----------------------------------
  * Reads through kUniversalStandardAbsoluteFilename line by line, ignorning those that don't match
- * kSystemCallNumberDefinePattern, ands add a new number -> name and name -> number association to 
+ * kSystemCallNumberDefinePattern, ands add a new number -> name and name -> number association to
  * systemCallNumbers and systemCallNames for each line that does.
  */
-static void collectSystemCallNumbers(map<int, string>& systemCallNumbers, map<string, int>& systemCallNames) {
+static void collectSystemCallNumbers(map<int, string> &systemCallNumbers, map<string, int> &systemCallNames)
+{
   ifstream infile(kUniversalStandardAbsoluteFilename);
-  if (infile.fail()) 
+  if (infile.fail())
     throw MissingFileException("Encountered a problem opening \"" + kUniversalStandardAbsoluteFilename);
 
   regex re(kSystemCallNumberDefinePattern);
   string line;
-  while (true) {
+  while (true)
+  {
     getline(infile, line);
-    if (infile.fail()) break;
+    if (infile.fail())
+      break;
     smatch sm;
-    if (!regex_match(line, sm, re)) continue;
-    const string& name = sm[1];
+    if (!regex_match(line, sm, re))
+      continue;
+    const string &name = sm[1];
     int number = stoi(sm[2]); // stoi converts a digit string to an int
     systemCallNumbers[number] = name;
     systemCallNames[name] = number;
@@ -154,12 +176,13 @@ static void collectSystemCallNumbers(map<int, string>& systemCallNumbers, map<st
  *    .* matches everything after the , or ) that marks the end of the system call name.
  */
 static const string kSystemCallNameAndSignaturePattern = "\\s*SYSCALL_DEFINE([0-6])\\s*\\(([^,)]+).*";
-static pair<string, int> processNameAndArgumentCount(const string& macro, map<string, systemCallSignature>& systemCallSignatures) {
+static pair<string, int> processNameAndArgumentCount(const string &macro, map<string, systemCallSignature> &systemCallSignatures)
+{
   regex re(kSystemCallNameAndSignaturePattern);
   smatch sm;
   assert(regex_match(macro, sm, re));
   assert(sm.size() == 3);
-  const string& name = sm[2];
+  const string &name = sm[2];
   int numArguments = stoi(sm[1]);
   return make_pair(name, numArguments);
 }
@@ -170,9 +193,12 @@ static pair<string, int> processNameAndArgumentCount(const string& macro, map<st
  * Simple conversion function that takes the C data type embedded in a SYSCALL_DEFINE macro and
  * converts it to SYSCALL_STRING, SYSCALL_POINTER, or SYSCALL_INTEGER.
  */
-static scParamType normalizeType(const string& type) {
-  if (type == "const char __user *" || type == "const char *") return SYSCALL_STRING;
-  if (type == "unsigned long" || type.find('*') != string::npos) return SYSCALL_POINTER;
+static scParamType normalizeType(const string &type)
+{
+  if (type == "const char __user *" || type == "const char *")
+    return SYSCALL_STRING;
+  if (type == "unsigned long" || type.find('*') != string::npos)
+    return SYSCALL_POINTER;
   return SYSCALL_INTEGER;
 }
 
@@ -184,16 +210,19 @@ static scParamType normalizeType(const string& type) {
  *
  * TODO: // simplify this to a static regex pattern that works for all argument counts.
  */
-static void processSystemCallArguments(const string& macro, int numArguments, systemCallSignature& parameterTypes) {
+static void processSystemCallArguments(const string &macro, int numArguments, systemCallSignature &parameterTypes)
+{
   assert(numArguments > 0);
   string pattern = "[^(]+\\([^,]+"; // skip everything up through and including macro name, open parenthesis, and first token
-  for (int i = 0; i < 2 * numArguments; i++) pattern += ",([^,]+)";
+  for (int i = 0; i < 2 * numArguments; i++)
+    pattern += ",([^,]+)";
   pattern += "\\s*\\)\\s*";
   regex re(pattern);
   smatch sm;
   assert(regex_match(macro, sm, re));
   assert(int(sm.size()) == (2 * numArguments + 1));
-  for (int i = 0; i < numArguments; i++) {
+  for (int i = 0; i < numArguments; i++)
+  {
     string type = sm[2 * i + 1];
     scParamType normalizedType = normalizeType(trim(type));
     parameterTypes.push_back(normalizedType);
@@ -208,14 +237,16 @@ static void processSystemCallArguments(const string& macro, int numArguments, sy
  * provided ifstream until a close parenthesis is found.  ingestEntireMacro returns
  * the concatenation of the first line and all additional lines read in.
  */
-static string ingestEntireMacro(ifstream& infile, const string& firstLine) {
+static string ingestEntireMacro(ifstream &infile, const string &firstLine)
+{
   string macro = firstLine;
-  while (macro.find(')') == string::npos) {
+  while (macro.find(')') == string::npos)
+  {
     string next;
     getline(infile, next);
     macro += next;
   }
-  
+
   return macro;
 }
 
@@ -227,15 +258,18 @@ static string ingestEntireMacro(ifstream& infile, const string& firstLine) {
  * ensure that the relevant entry within systemCallSignatures reflects this argument count and the data types expected (relying
  * on the scParamType to distinguish the types to the extent we need to).
  */
-static void processSystemCallSignature(const string& macro, map<string, systemCallSignature>& systemCallSignatures, const map<string, int>& systemCallNames) {
+static void processSystemCallSignature(const string &macro, map<string, systemCallSignature> &systemCallSignatures, const map<string, int> &systemCallNames)
+{
   pair<string, int> p = processNameAndArgumentCount(macro, systemCallSignatures);
-  const string& name = trim(p.first);
+  const string &name = trim(p.first);
   int numArguments = p.second;
   if (systemCallNames.find(name) == systemCallNames.cend() ||
-      systemCallSignatures.find(name) != systemCallSignatures.cend()) return; // either don't know the system call or we've already processed it
-  
+      systemCallSignatures.find(name) != systemCallSignatures.cend())
+    return; // either don't know the system call or we've already processed it
+
   systemCallSignatures[name]; // trivially add an zero-arg signature
-  if (numArguments == 0) return; 
+  if (numArguments == 0)
+    return;
   processSystemCallArguments(macro, numArguments, systemCallSignatures[name]);
 }
 
@@ -251,7 +285,7 @@ static void processSystemCallSignature(const string& macro, map<string, systemCa
  *   SYSCALL_DEFINE2(dup2, int, newfd, int, oldfd)
  *   ...
  *   SYSCALL_DEFINE6(futex, int *, uaddr, int op, int val, const struct timespec *, timeout, int *, uaddr2, int val3)
- * 
+ *
  * All such macros take at least one argument, and that required argument is the name of the system call.
  * The number of additional arguments is clear from the number in the macro name, and additional macro arguments
  * always come in pairs, e.g. SYSCALL_DEFINE2 takes 4 additional arguments, where each pair provided the type and
@@ -261,7 +295,7 @@ static void processSystemCallSignature(const string& macro, map<string, systemCa
  * whether more sophisticated parsing is necessary to infer a full prototype.
  *
  * Breakdown of \\s*SYSCALL_DEFINE([0-6]).* is actually fairly straightforward:
- * 
+ *
  *    \\s* matches any leading whitespace preceding the macro name
  *    SYSCALL_DEFINE matches precisely that: SYSCALL_DEFINE
  *    [0-6] matches a single digit character between 0 and 6, inclusive
@@ -269,16 +303,20 @@ static void processSystemCallSignature(const string& macro, map<string, systemCa
  *    .* matches everything beyond the opening parenthesis
  */
 static const string kSystemCallNameAndArgumentCountPattern = "\\s*SYSCALL_DEFINE[0-6]\\s*\\(.*";
-static void processSignaturesWithinKernelSourceFile(const string& sourceFileName, 
-                                                    map<string, systemCallSignature>& systemCallSignatures, 
-                                                    const map<string, int>& systemCallNames) {
+static void processSignaturesWithinKernelSourceFile(const string &sourceFileName,
+                                                    map<string, systemCallSignature> &systemCallSignatures,
+                                                    const map<string, int> &systemCallNames)
+{
   ifstream infile(sourceFileName);
   regex re(kSystemCallNameAndArgumentCountPattern);
-  while (true) {
+  while (true)
+  {
     string line;
     getline(infile, line);
-    if (infile.fail()) break;
-    if (regex_match(line, re)) {
+    if (infile.fail())
+      break;
+    if (regex_match(line, re))
+    {
       string macro = ingestEntireMacro(infile, line);
       processSystemCallSignature(macro, systemCallSignatures, systemCallNames);
     }
@@ -290,17 +328,22 @@ static void processSignaturesWithinKernelSourceFile(const string& sourceFileName
  * ---------------------------------
  */
 static const string kCacheFilename = ".trace_signatures.txt";
-static bool loadSignaturesFromCache(map<string, systemCallSignature>& systemCallSignatures) {
+static bool loadSignaturesFromCache(map<string, systemCallSignature> &systemCallSignatures)
+{
   ifstream cache(kCacheFilename);
-  if (cache.fail()) return false;
-  while (true) {
+  if (cache.fail())
+    return false;
+  while (true)
+  {
     string name;
     cache >> name;
-    if (cache.fail()) break;
+    if (cache.fail())
+      break;
     systemCallSignatures[name];
     string count;
     cache >> count;
-    for (int i = 0; i < stoi(count); i++) {
+    for (int i = 0; i < stoi(count); i++)
+    {
       scParamType type;
       cache >> type;
       systemCallSignatures[name].push_back(type);
@@ -315,11 +358,14 @@ static bool loadSignaturesFromCache(map<string, systemCallSignature>& systemCall
  * Because it takes such a long time to compile the system call signature information, and because
  * it doesn't change for months at a time, we store the signature data to a file named kCacheFilename.
  */
-static void cacheSignatures(const map<string, systemCallSignature>& systemCallSignatures) {
+static void cacheSignatures(const map<string, systemCallSignature> &systemCallSignatures)
+{
   ofstream cache(kCacheFilename);
-  for (const pair<string, systemCallSignature>& p: systemCallSignatures) {
+  for (const pair<string, systemCallSignature> &p : systemCallSignatures)
+  {
     cache << p.first << " " << p.second.size();
-    for (scParamType type: p.second) cache << " " << type;
+    for (scParamType type : p.second)
+      cache << " " << type;
     cache << endl;
   }
 }
@@ -331,13 +377,16 @@ static void cacheSignatures(const map<string, systemCallSignature>& systemCallSi
  * SYSCALL_DEFINE[0-6] macros.  Most of the work is done by processSignaturesWithinKernelSourceFile.  The code
  * exposed in this function is pretty self-explanatory.
  */
-static void processAllKernelSourceFiles(const subprocess_t& sp, map<string, systemCallSignature>& systemCallSignatures, const map<string, int>& systemCallNames) {
+static void processAllKernelSourceFiles(const subprocess_t &sp, map<string, systemCallSignature> &systemCallSignatures, const map<string, int> &systemCallNames)
+{
   stdio_filebuf<char> processbuf(sp.ingestfd, ios::in);
   istream instream(&processbuf); // wrap the ingest file descriptor in a C++ istream so we can more easily parse each file line by line.
-  while (true) {
+  while (true)
+  {
     string sourceFileName;
     getline(instream, sourceFileName);
-    if (instream.fail()) break;
+    if (instream.fail())
+      break;
     processSignaturesWithinKernelSourceFile(sourceFileName, systemCallSignatures, systemCallNames);
   }
 
@@ -353,10 +402,12 @@ static void processAllKernelSourceFiles(const subprocess_t& sp, map<string, syst
  */
 static const string kKernelSourceCodeDirectory = "/usr/src/linux-source-3.13.0/linux-source-3.13.0";
 static const char *const kKernelSourceFileFinderCommand[] = {"find", kKernelSourceCodeDirectory.c_str(), "-name", "*.c", "-print", NULL};
-static void collectSystemCallSignatures(map<string, systemCallSignature>& systemCallSignatures, const map<string, int>& systemCallNames, bool rebuild) {
-  if (!rebuild && loadSignaturesFromCache(systemCallSignatures)) return;
-  subprocess_t sp = subprocess(const_cast<char **>(kKernelSourceFileFinderCommand), 
-                               /* supplyChildInput = */ false, 
+static void collectSystemCallSignatures(map<string, systemCallSignature> &systemCallSignatures, const map<string, int> &systemCallNames, bool rebuild)
+{
+  if (!rebuild && loadSignaturesFromCache(systemCallSignatures))
+    return;
+  subprocess_t sp = subprocess(const_cast<char **>(kKernelSourceFileFinderCommand),
+                               /* supplyChildInput = */ false,
                                /* ingestChildOutput = */ true);
   cout << "Extracting system call signature information from " << kKernelSourceCodeDirectory << "..." << endl;
   cout << "Expect to wait about a minute..... " << flush;
@@ -372,9 +423,10 @@ static void collectSystemCallSignatures(map<string, systemCallSignature>& system
  * Populates the supplied maps with information about system call numbers, names, and signatures.
  * The implementation just passes the buck on to two helper functions.
  */
-void compileSystemCallData(map<int, string>& systemCallNumbers,
-                           map<std::string, int>& systemCallNames,
-                           map<std::string, systemCallSignature>& systemCallSignatures, bool rebuild) {
+void compileSystemCallData(map<int, string> &systemCallNumbers,
+                           map<std::string, int> &systemCallNames,
+                           map<std::string, systemCallSignature> &systemCallSignatures, bool rebuild)
+{
   if (systemCallNumbers.size() + systemCallNames.size() + systemCallSignatures.size() > 0)
     throw TraceException("The maps supplied to compileSystemCallData must all be empty.");
   collectSystemCallNumbers(systemCallNumbers, systemCallNames);

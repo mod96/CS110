@@ -8,17 +8,20 @@
 #pragma once
 #include <exception>
 #include <string>
+#define throw(...)
 
-class TraceException: public std::exception {
-  public:
-    TraceException(const std::string& message): message(message) {}
-    const char *what() const noexcept { return message.c_str(); }
-  
-  private:
-    std::string message;
+class TraceException : public std::exception
+{
+public:
+  TraceException(const std::string &message) : message(message) {}
+  const char *what() const noexcept { return message.c_str(); }
+
+private:
+  std::string message;
 };
 
-class MissingFileException: public TraceException {
-  public:
-    MissingFileException(const std::string& message): TraceException(message) {}
+class MissingFileException : public TraceException
+{
+public:
+  MissingFileException(const std::string &message) : TraceException(message) {}
 };

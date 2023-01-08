@@ -23,6 +23,7 @@
 #ifndef _pipeline_h_
 #define _pipeline_h_
 
+#include <sys/types.h>
 #include <unistd.h>
 
 /**
