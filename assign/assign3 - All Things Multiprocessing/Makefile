@@ -68,6 +68,12 @@ $(TRACE_LIB): $(TRACE_LIB_OBJ)
 	ar r $@ $^
 	ranlib $@
 
+pipeline-test: ;
+	gcc pipeline.c pipeline-test.c -lstdc++ -o pipeline-test $@
+
+subprocess-test: ;
+	gcc subprocess.cc subprocess-test.cc -lstdc++ -o subprocess-test $@
+
 clean::
 	rm -f $(C_PROGS) $(C_PROGS_OBJ) $(C_PROGS_DEP)
 	rm -f $(CXX_PROGS) $(CXX_PROGS_OBJ) $(CXX_PROGS_DEP)

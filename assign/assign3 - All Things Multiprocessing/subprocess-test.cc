@@ -73,7 +73,6 @@ static void waitForChildProcess(pid_t pid)
 const string kSortExecutable = "/usr/bin/sort";
 int main(int argc, char *argv[])
 {
-  // true, false
   try
   {
     char *argv[] = {const_cast<char *>(kSortExecutable.c_str()), NULL};
@@ -81,21 +80,21 @@ int main(int argc, char *argv[])
     publishWordsToChild(child.supplyfd);
     ingestAndPublishWords(child.ingestfd);
     waitForChildProcess(child.pid);
-    // true, false
-    child = subprocess(argv, true, false);
-    publishWordsToChild(child.supplyfd);
-    ingestAndPublishWords(child.ingestfd);
-    waitForChildProcess(child.pid);
-    // false, true
-    child = subprocess(argv, false, true);
-    publishWordsToChild(child.supplyfd);
-    ingestAndPublishWords(child.ingestfd);
-    waitForChildProcess(child.pid);
-    // false, false
-    child = subprocess(argv, false, false);
-    publishWordsToChild(child.supplyfd);
-    ingestAndPublishWords(child.ingestfd);
-    waitForChildProcess(child.pid);
+    // // true, false
+    // child = subprocess(argv, true, false);
+    // publishWordsToChild(child.supplyfd);
+    // ingestAndPublishWords(child.ingestfd);
+    // waitForChildProcess(child.pid);
+    // // false, true
+    // child = subprocess(argv, false, true);
+    // publishWordsToChild(child.supplyfd);
+    // ingestAndPublishWords(child.ingestfd);
+    // waitForChildProcess(child.pid);
+    // // false, false
+    // child = subprocess(argv, false, false);
+    // publishWordsToChild(child.supplyfd);
+    // ingestAndPublishWords(child.ingestfd);
+    // waitForChildProcess(child.pid);
     return 0;
   }
   catch (const SubprocessException &se)

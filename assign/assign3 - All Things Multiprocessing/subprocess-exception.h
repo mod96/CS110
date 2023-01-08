@@ -8,7 +8,6 @@
 #pragma once
 #include <exception>
 #include <string>
-#define throw(...)
 
 class SubprocessException : public std::exception
 {
