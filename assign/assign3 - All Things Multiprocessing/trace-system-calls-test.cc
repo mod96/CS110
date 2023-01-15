@@ -2,7 +2,7 @@
  * File: trace-system-calls-test.cc
  * --------------------------------
  * Exercises the functionality of the trace-system-calls module,
- * which is supposed to know precisely how to dig into the system include and Linux 
+ * which is supposed to know precisely how to dig into the system include and Linux
  * source directory trees to pull out system call numbers, names, and signatures.
  */
 
@@ -10,31 +10,40 @@
 #include <iostream>
 using namespace std;
 
-static void printSignature(int systemCallNumber, const string& systemCallName, const systemCallSignature& signature) {
+static void printSignature(int systemCallNumber, const string &systemCallName, const systemCallSignature &signature)
+{
   cout << systemCallNumber << ": " << systemCallName << "(";
-  for (size_t i = 0; i < signature.size(); i++) {
+  for (size_t i = 0; i < signature.size(); i++)
+  {
     cout << signature[i];
-    if (i == signature.size() - 1) break;
+    if (i == signature.size() - 1)
+      break;
     cout << ", ";
   }
-  cout << ")"; 
+  cout << ")";
 }
 
-static void printSystemCallData(const map<int, string>& systemCallNumbers, const map<string, systemCallSignature>& systemCallSignatures) {
-  for (const pair<int, string>& numToNamePair: systemCallNumbers) {
+static void printSystemCallData(const map<int, string> &systemCallNumbers, const map<string, systemCallSignature> &systemCallSignatures)
+{
+  for (const pair<int, string> &numToNamePair : systemCallNumbers)
+  {
     int systemCallNumber = numToNamePair.first;
-    const string& systemCallName = numToNamePair.second;
+    const string &systemCallName = numToNamePair.second;
     auto iter = systemCallSignatures.find(systemCallName);
-    if (iter != systemCallSignatures.cend()) {
+    if (iter != systemCallSignatures.cend())
+    {
       printSignature(systemCallNumber, systemCallName, iter->second);
-    } else {
+    }
+    else
+    {
       cout << systemCallNumber << ": " << systemCallName << " isn't implemented.";
     }
     cout << endl;
   }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   map<int, string> systemCallNumbers;
   map<string, int> systemCallNames;
   map<string, systemCallSignature> systemCallSignatures;

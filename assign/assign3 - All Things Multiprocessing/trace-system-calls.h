@@ -4,7 +4,7 @@
  * Exports a collection of functions that help keep track of all system call names,
  * numbers, and argument lists.  The functions crawl over the system directories.
  */
- 
+
 #pragma once
 #include <map>
 #include <vector>
@@ -18,9 +18,10 @@
  * integer types (SYSCALL_INTEGER), const char * and const char __user * types (SYSCALL_STRING),
  * and other pointer types (SYSCALL_POINTER).
  */
-enum scParamType {
-  SYSCALL_INTEGER, 
-  SYSCALL_STRING, 
+enum scParamType
+{
+  SYSCALL_INTEGER,
+  SYSCALL_STRING,
   SYSCALL_POINTER,
   SYSCALL_UNKNOWN_TYPE
 };
@@ -31,7 +32,7 @@ enum scParamType {
  * Self-explanatory overload of the << operator for scParamType, so they
  * know how to print themselves.
  */
-std::ostream& operator<<(std::ostream& os, const scParamType& type);
+std::ostream &operator<<(std::ostream &os, const scParamType &type);
 
 /**
  * Function: operator>> for scParamType
@@ -39,7 +40,7 @@ std::ostream& operator<<(std::ostream& os, const scParamType& type);
  * Self-explanatory overload of the >> operator for scParamType, so they know
  * how to pull themselves out of istreams.
  */
-std::istream& operator>>(std::istream& is, scParamType& type);
+std::istream &operator>>(std::istream &is, scParamType &type);
 
 /**
  * Type: systemCallSignature
@@ -79,6 +80,6 @@ typedef std::vector<scParamType> systemCallSignature;
  * The rebuild boolean, if true, is an instruction to rebuild the map of prototype information from scratch
  * instead of relying on a cached data file.
  */
-void compileSystemCallData(std::map<int, std::string>& systemCallNumbers,
-                           std::map<std::string, int>& systemCallNames,
-                           std::map<std::string, systemCallSignature>& systemCallSignatures, bool rebuild);
+void compileSystemCallData(std::map<int, std::string> &systemCallNumbers,
+                           std::map<std::string, int> &systemCallNames,
+                           std::map<std::string, systemCallSignature> &systemCallSignatures, bool rebuild);

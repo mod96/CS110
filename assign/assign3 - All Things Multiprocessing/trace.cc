@@ -25,10 +25,12 @@
 #include "trace-exception.h"
 using namespace std;
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   bool simple = false, rebuild = false;
   int numFlags = processCommandLineFlags(simple, rebuild, argv);
-  if (argc - numFlags == 1) {
+  if (argc - numFlags == 1)
+  {
     cout << "Nothing to trace... exiting." << endl;
     return 0;
   }

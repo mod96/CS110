@@ -4,10 +4,10 @@
  * Provides the implementation of the compileSystemCallErrorStrings routine, which
  * just parses the relevant system interface file to map errno status codes (e.g. 2) to
  * the #define constants defined for them (e.g. "ENOENT").
- * 
+ *
  * Most of the implementation is self-explanatory, although the regular expression deserves
- * some explanation.  
- * 
+ * some explanation.
+ *
  *   [^E]*(E\\S*)\\s+(\\d+).*
  *
  * Breakdown:
@@ -44,7 +44,7 @@ using namespace std;
  * Collects the header files that need to be parsed on the myths to surface all
  * errno numbers (e.g. 2) to their more easily recognizes constants (e.g. "ENOENT").
  */
-static const string kErrorHeaderFilenames[] = { "/usr/include/asm-generic/errno-base.h", "/usr/include/asm-generic/errno.h" };
+static const string kErrorHeaderFilenames[] = {"/usr/include/asm-generic/errno-base.h", "/usr/include/asm-generic/errno.h"};
 
 /**
  * Constant: kErrorConstantDefinePattern
@@ -61,13 +61,15 @@ static const string kErrorConstantDefinePattern = "[^E]*(E\\S*)\\s+(\\d+).*";
  * then the function returns without modifying the map.  If it succeeds, then a new pair<int, string>
  * is added to the supplied map.
  */
-static void processLine(map<int, string>& errorConstants, const string& line) {
+static void processLine(map<int, string> &errorConstants, const string &line)
+{
   regex re(kErrorConstantDefinePattern); // all constants we're interested in begin with E
   smatch sm;
-  if (!regex_match(line, sm, re)) return;
+  if (!regex_match(line, sm, re))
+    return;
   assert(sm.size() == 3);
   int num = stoi(sm[2]); // stoi converts a digit string to an int
-  const string& str = sm[1];
+  const string &str = sm[1];
   errorConstants[num] = str;
 }
 
@@ -77,16 +79,20 @@ static void processLine(map<int, string>& errorConstants, const string& line) {
  * Crawls over the files listed in kErrorHeaderFilenames and populates the
  * supplied map with all of the errno #define constants (like ENOENT, ECHILD, EACCES, etc).
  */
-void compileSystemCallErrorStrings(map<int, string>& errorConstants) throw (MissingFileException) {
-  for (const string& name: kErrorHeaderFilenames) {
+void compileSystemCallErrorStrings(map<int, string> &errorConstants) throw(MissingFileException)
+{
+  for (const string &name : kErrorHeaderFilenames)
+  {
     ifstream infile(name);
-    if (infile.fail()) 
+    if (infile.fail())
       throw MissingFileException("Failed to open the file named \"" + name + "\".");
 
-    while (true) {
+    while (true)
+    {
       string line;
       getline(infile, line);
-      if (infile.fail()) break;
+      if (infile.fail())
+        break;
       processLine(errorConstants, line);
     }
   }

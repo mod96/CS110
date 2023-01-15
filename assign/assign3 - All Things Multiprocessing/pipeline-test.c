@@ -1,7 +1,7 @@
 /**
  * File: pipeline-test.c
  * ---------------------
- * Exercises the pipeline function to verify 
+ * Exercises the pipeline function to verify
  * basic functionality.
  */
 
@@ -12,21 +12,26 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 
-static void printArgumentVector(char *argv[]) {
-  if (argv == NULL || *argv == NULL) {
+static void printArgumentVector(char *argv[])
+{
+  if (argv == NULL || *argv == NULL)
+  {
     printf("<empty>");
     return;
   }
-  
-  while (true) {
+
+  while (true)
+  {
     printf("%s", *argv);
     argv++;
-    if (*argv == NULL) return;
+    if (*argv == NULL)
+      return;
     printf(" ");
   }
 }
 
-static void summarizePipeline(char *argv1[], char *argv2[]) {
+static void summarizePipeline(char *argv1[], char *argv2[])
+{
   printf("Pipeline: ");
   printArgumentVector(argv1);
   printf(" -> ");
@@ -34,7 +39,8 @@ static void summarizePipeline(char *argv1[], char *argv2[]) {
   printf("\n");
 }
 
-static void launchPipedExecutables(char *argv1[], char *argv2[]) {
+static void launchPipedExecutables(char *argv1[], char *argv2[])
+{
   summarizePipeline(argv1, argv2);
   pid_t pids[2];
   pipeline(argv1, argv2, pids);
@@ -42,13 +48,15 @@ static void launchPipedExecutables(char *argv1[], char *argv2[]) {
   waitpid(pids[1], NULL, 0);
 }
 
-static void simpleTest() {
+static void simpleTest()
+{
   char *argv1[] = {"cat", "/usr/include/tar.h", NULL};
   char *argv2[] = {"wc", NULL};
   launchPipedExecutables(argv1, argv2);
 }
 
-static void sleepTest() {
+static void sleepTest()
+{
   char *argv1[] = {"sleep", "10", NULL};
   char *argv2[] = {"sleep", "10", NULL};
   struct timeval start, end;
@@ -58,7 +66,8 @@ static void sleepTest() {
   printf("Time elapsed: %ld seconds.\n", end.tv_sec - start.tv_sec);
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   simpleTest();
   sleepTest();
   return 0;
