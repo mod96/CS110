@@ -14,6 +14,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <list>
 #include <algorithm>
 #include <fcntl.h>
 #include <unistd.h> // for fork
@@ -78,8 +79,29 @@ static void installSignalHandlers()
  */
 static void createJob(const pipeline &p)
 {
-	cout << p; // remove this line once you get started
-	/* STSHJob& job = */ joblist.addJob(kForeground);
+	// cout << p; // remove this line once you get started
+	// STSHJob &job = joblist.addJob(kForeground);
+	pid_t pid = fork();
+	if (pid == 0)
+	{
+		const char *command = p.commands[0].command;
+		const char *const *tokens = p.commands[0].tokens;
+		int tokensSize = 0;
+		while (tokens[tokensSize] != nullptr)
+			tokensSize++;
+
+		char **argv = new char *[1 + tokensSize]();
+		argv[0] = new char[strlen(command) + 1];
+		strcpy(argv[0], command);
+		for (short i = 0; i < tokensSize; i++)
+		{
+			argv[i + 1] = new char[strlen(tokens[i]) + 1]();
+			strcpy(argv[i + 1], tokens[i]);
+		}
+
+		execvp(argv[0], argv);
+	}
+	waitpid(pid, NULL, 0);
 }
 
 /**
