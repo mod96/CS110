@@ -70,6 +70,44 @@ static void installSignalHandlers()
 						 { exit(0); });
 	installSignalHandler(SIGTTIN, SIG_IGN);
 	installSignalHandler(SIGTTOU, SIG_IGN);
+	installSignalHandler(SIGCHLD, [](int sig)
+						 {
+		while (true) {
+			pid_t pid = waitpid(-1, NULL, WNOHANG);
+    		if (pid <= 0) break;
+			STSHJob &job = joblist.getJobWithProcess(pid);
+			job.getProcess(pid).setState(kTerminated);
+			joblist.synchronize(job);
+		} });
+}
+
+static void toggleSIGCHLDBlock(int how)
+{
+	sigset_t mask;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGCHLD);
+	sigprocmask(how, &mask, NULL);
+}
+
+void blockSIGCHLD()
+{
+	toggleSIGCHLDBlock(SIG_BLOCK);
+}
+
+void unblockSIGCHLD()
+{
+	toggleSIGCHLDBlock(SIG_UNBLOCK);
+}
+
+static void waitForForegroundProcess(pid_t pid)
+{
+	sigset_t empty;
+	sigemptyset(&empty);
+	while (joblist.containsProcess(pid))
+	{
+		sigsuspend(&empty);
+	}
+	unblockSIGCHLD();
 }
 
 /**
@@ -79,11 +117,19 @@ static void installSignalHandlers()
  */
 static void createJob(const pipeline &p)
 {
-	// cout << p; // remove this line once you get started
-	// STSHJob &job = joblist.addJob(kForeground);
+	blockSIGCHLD();
+	STSHJob &job = joblist.addJob(kForeground);
 	pid_t pid = fork();
+	if (pid != 0)
+	{
+		job.addProcess(STSHProcess(pid, p.commands[0]));
+	}
 	if (pid == 0)
 	{
+		unblockSIGCHLD();
+		pid_t selfPid = getpid();
+		setpgid(selfPid, selfPid);
+
 		const char *command = p.commands[0].command;
 		const char *const *tokens = p.commands[0].tokens;
 		int tokensSize = 0;
@@ -91,17 +137,16 @@ static void createJob(const pipeline &p)
 			tokensSize++;
 
 		char **argv = new char *[1 + tokensSize]();
-		argv[0] = new char[strlen(command) + 1];
+		argv[0] = new char[strlen(command) + 1]();
 		strcpy(argv[0], command);
 		for (short i = 0; i < tokensSize; i++)
 		{
 			argv[i + 1] = new char[strlen(tokens[i]) + 1]();
 			strcpy(argv[i + 1], tokens[i]);
 		}
-
 		execvp(argv[0], argv);
 	}
-	waitpid(pid, NULL, 0);
+	waitForForegroundProcess(pid);
 }
 
 /**
