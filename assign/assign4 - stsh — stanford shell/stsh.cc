@@ -12,6 +12,7 @@
 #include "stsh-job.h"
 #include "stsh-process.h"
 #include <cstring>
+#include <cassert>
 #include <iostream>
 #include <string>
 #include <list>
@@ -23,6 +24,31 @@
 using namespace std;
 
 static STSHJobList joblist; // the one piece of global data we need so signal handlers can access it
+
+static void waitForForegroundProcess(pid_t pid);
+
+static void handleFg(size_t jobNumber)
+{
+	if (!joblist.containsJob(jobNumber))
+		throw STSHException("Internal Error: Invalid job number.");
+	STSHJob &job = joblist.getJob(jobNumber);
+	job.setState(kForeground);
+	for (STSHProcess &process : job.getProcesses())
+	{
+		process.setState(kRunning);
+	}
+	joblist.synchronize(job);
+	pid_t groupID = job.getGroupID();
+	if (groupID)
+	{
+		killpg(groupID, SIGCONT); // if it were running, it will be ignored
+		for (STSHProcess &process : job.getProcesses())
+		{
+			waitForForegroundProcess(process.getID());
+		}
+		return;
+	}
+}
 
 /**
  * Function: handleBuiltin
@@ -46,6 +72,24 @@ static bool handleBuiltin(const pipeline &pipeline)
 	case 0:
 	case 1:
 		exit(0);
+	case 2:
+	{
+		if (pipeline.commands[0].tokens[0][0] == '\0')
+		{
+			throw STSHException("Internal Error: Build-in command 'fg' requires job number as an argument.");
+		}
+		const string &token = pipeline.commands[0].tokens[0];
+		try
+		{
+			size_t jobNumber = stoi(token);
+			handleFg(jobNumber);
+		}
+		catch (const std::exception &e)
+		{
+			throw STSHException("Internal Error: Invalid argument passed.");
+		}
+		break;
+	}
 	case 7:
 		cout << joblist;
 		break;
@@ -72,13 +116,47 @@ static void installSignalHandlers()
 	installSignalHandler(SIGTTOU, SIG_IGN);
 	installSignalHandler(SIGCHLD, [](int sig)
 						 {
-		while (true) {
-			pid_t pid = waitpid(-1, NULL, WNOHANG);
+		while (true) { 
+			int status;
+			pid_t pid = waitpid(-1, &status, WUNTRACED | WCONTINUED | WNOHANG);
     		if (pid <= 0) break;
+			assert(joblist.containsProcess(pid));
 			STSHJob &job = joblist.getJobWithProcess(pid);
-			job.getProcess(pid).setState(kTerminated);
+			STSHProcess &process = job.getProcess(pid);
+			if (WIFEXITED(status) || WIFSIGNALED(status)) { // exited or terminated
+				process.setState(kTerminated);
+				std::cout << "Child " << pid << " exited or terminated" <<  std::endl;
+			} else if (WIFSTOPPED(status)) {
+				process.setState(kStopped);
+				std::cout << "Child " << pid << " stopped by signal " << WSTOPSIG(status) << std::endl;
+			} else if (WIFCONTINUED(status)) {
+				process.setState(kRunning);
+				std::cout << "Child " << pid << " continued" << std::endl;
+			}
 			joblist.synchronize(job);
+			waitForForegroundProcess(pid);
 		} });
+	installSignalHandler(SIGINT, [](int sig)
+						 {
+							 if (joblist.hasForegroundJob())
+							 {
+								 pid_t groupID = joblist.getForegroundJob().getGroupID();
+								 if (groupID)
+								 {
+									 killpg(groupID, SIGINT);
+								 }
+							 } }); // to exit the shell, just type 'exit' (see above)
+
+	installSignalHandler(SIGTSTP, [](int sig)
+						 { 
+							if (joblist.hasForegroundJob())
+							{
+								pid_t groupID = joblist.getForegroundJob().getGroupID();
+								if (groupID)
+								{
+									killpg(groupID, SIGTSTP);
+								}								
+							} });
 }
 
 static void toggleSIGCHLDBlock(int how)
@@ -89,12 +167,12 @@ static void toggleSIGCHLDBlock(int how)
 	sigprocmask(how, &mask, NULL);
 }
 
-void blockSIGCHLD()
+static void blockSIGCHLD()
 {
 	toggleSIGCHLDBlock(SIG_BLOCK);
 }
 
-void unblockSIGCHLD()
+static void unblockSIGCHLD()
 {
 	toggleSIGCHLDBlock(SIG_UNBLOCK);
 }
@@ -103,7 +181,7 @@ static void waitForForegroundProcess(pid_t pid)
 {
 	sigset_t empty;
 	sigemptyset(&empty);
-	while (joblist.containsProcess(pid))
+	while (joblist.hasForegroundJob() && joblist.containsProcess(pid) && joblist.getJobWithProcess(pid).getState() == kForeground)
 	{
 		sigsuspend(&empty);
 	}
@@ -120,11 +198,11 @@ static void createJob(const pipeline &p)
 	blockSIGCHLD();
 	STSHJob &job = joblist.addJob(kForeground);
 	pid_t pid = fork();
-	if (pid != 0)
+	if (pid != 0) // parent
 	{
 		job.addProcess(STSHProcess(pid, p.commands[0]));
 	}
-	if (pid == 0)
+	if (pid == 0) // child
 	{
 		unblockSIGCHLD();
 		pid_t selfPid = getpid();
@@ -174,6 +252,7 @@ int main(int argc, char *argv[])
 			bool builtin = handleBuiltin(p);
 			if (!builtin)
 				createJob(p); // createJob is initially defined as a wrapper around cout << p;
+							  // cout << joblist << endl;
 		}
 		catch (const STSHException &e)
 		{
