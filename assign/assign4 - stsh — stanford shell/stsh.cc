@@ -23,14 +23,28 @@
 #include <sys/wait.h>
 using namespace std;
 
+static bool DEBUG = false;
+
 static STSHJobList joblist; // the one piece of global data we need so signal handlers can access it
 
 static void waitForForegroundProcess(pid_t pid);
 
-static void handleFg(size_t jobNumber)
+static void handleFg(const pipeline &pipeline)
 {
+	if (pipeline.commands[0].tokens[0] == NULL)
+		throw STSHException("Usage: fg <jobid>.");
+	size_t jobNumber;
+	try
+	{
+		const string &token = pipeline.commands[0].tokens[0];
+		jobNumber = stoi(token);
+	}
+	catch (const std::exception &e)
+	{
+		throw STSHException("Usage: fg <jobid>.");
+	}
 	if (!joblist.containsJob(jobNumber))
-		throw STSHException("Internal Error: Invalid job number.");
+		throw STSHException("fg " + to_string(jobNumber) + ": No such job.");
 	STSHJob &job = joblist.getJob(jobNumber);
 	job.setState(kForeground);
 	for (STSHProcess &process : job.getProcesses())
@@ -46,6 +60,37 @@ static void handleFg(size_t jobNumber)
 		{
 			waitForForegroundProcess(process.getID());
 		}
+		return;
+	}
+}
+
+static void handleBg(const pipeline &pipeline)
+{
+	if (pipeline.commands[0].tokens[0] == NULL)
+		throw STSHException("Usage: bg <jobid>.");
+	size_t jobNumber;
+	try
+	{
+		const string &token = pipeline.commands[0].tokens[0];
+		jobNumber = stoi(token);
+	}
+	catch (const std::exception &e)
+	{
+		throw STSHException("Usage: bg <jobid>.");
+	}
+	if (!joblist.containsJob(jobNumber))
+		throw STSHException("bg " + to_string(jobNumber) + ": No such job.");
+	STSHJob &job = joblist.getJob(jobNumber);
+	job.setState(kBackground);
+	for (STSHProcess &process : job.getProcesses())
+	{
+		process.setState(kRunning);
+	}
+	joblist.synchronize(job);
+	pid_t groupID = job.getGroupID();
+	if (groupID)
+	{
+		killpg(groupID, SIGCONT); // if it were running, it will be ignored
 		return;
 	}
 }
@@ -74,20 +119,12 @@ static bool handleBuiltin(const pipeline &pipeline)
 		exit(0);
 	case 2:
 	{
-		if (pipeline.commands[0].tokens[0][0] == '\0')
-		{
-			throw STSHException("Internal Error: Build-in command 'fg' requires job number as an argument.");
-		}
-		const string &token = pipeline.commands[0].tokens[0];
-		try
-		{
-			size_t jobNumber = stoi(token);
-			handleFg(jobNumber);
-		}
-		catch (const std::exception &e)
-		{
-			throw STSHException("Internal Error: Invalid argument passed.");
-		}
+		handleFg(pipeline);
+		break;
+	}
+	case 3:
+	{
+		handleBg(pipeline);
 		break;
 	}
 	case 7:
@@ -125,13 +162,16 @@ static void installSignalHandlers()
 			STSHProcess &process = job.getProcess(pid);
 			if (WIFEXITED(status) || WIFSIGNALED(status)) { // exited or terminated
 				process.setState(kTerminated);
-				std::cout << "Child " << pid << " exited or terminated" <<  std::endl;
+				if (DEBUG) 
+					std::cout << "Child " << pid << " exited or terminated" <<  std::endl;
 			} else if (WIFSTOPPED(status)) {
 				process.setState(kStopped);
-				std::cout << "Child " << pid << " stopped by signal " << WSTOPSIG(status) << std::endl;
+				if (DEBUG) 
+					std::cout << "Child " << pid << " stopped by signal " << WSTOPSIG(status) << std::endl;
 			} else if (WIFCONTINUED(status)) {
 				process.setState(kRunning);
-				std::cout << "Child " << pid << " continued" << std::endl;
+				if (DEBUG) 
+					std::cout << "Child " << pid << " continued" << std::endl;
 			}
 			joblist.synchronize(job);
 			waitForForegroundProcess(pid);
@@ -208,23 +248,26 @@ static void createJob(const pipeline &p)
 		pid_t selfPid = getpid();
 		setpgid(selfPid, selfPid);
 
-		const char *command = p.commands[0].command;
-		const char *const *tokens = p.commands[0].tokens;
-		int tokensSize = 0;
-		while (tokens[tokensSize] != nullptr)
-			tokensSize++;
-
-		char **argv = new char *[1 + tokensSize]();
-		argv[0] = new char[strlen(command) + 1]();
-		strcpy(argv[0], command);
-		for (short i = 0; i < tokensSize; i++)
+		char *argv[kMaxArguments + 2] = {NULL};
+		argv[0] = const_cast<char *>(p.commands[0].command);
+		for (unsigned int j = 0; j <= kMaxArguments && p.commands[0].tokens[j] != NULL; j++)
 		{
-			argv[i + 1] = new char[strlen(tokens[i]) + 1]();
-			strcpy(argv[i + 1], tokens[i]);
+			argv[j + 1] = p.commands[0].tokens[j];
 		}
-		execvp(argv[0], argv);
+		int err = execvp(argv[0], argv);
+		if (err < 0)
+			throw STSHException("Command not found");
 	}
-	waitForForegroundProcess(pid);
+	if (p.background)
+	{
+		job.setState(kBackground);
+
+		cout << "[" << job.getNum() << "] " << pid << endl;
+	}
+	else
+	{
+		waitForForegroundProcess(pid);
+	}
 }
 
 /**
