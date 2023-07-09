@@ -28,6 +28,16 @@ static bool DEBUG = false;
 static STSHJobList joblist; // the one piece of global data we need so signal handlers can access it
 
 static void waitForForegroundProcess(pid_t pid);
+static void giveForegroundtc(pid_t pid)
+{
+	if ((tcsetpgrp(STDIN_FILENO, pid) == -1) && (errno == ENOTTY))
+		throw STSHException("more serious problem");
+}
+static void resetForgroundtc()
+{
+	pid_t pgid = getpgid(getpid());
+	giveForegroundtc(pgid);
+}
 
 static void handleFg(const pipeline &pipeline)
 {
@@ -56,10 +66,12 @@ static void handleFg(const pipeline &pipeline)
 	if (groupID)
 	{
 		killpg(groupID, SIGCONT); // if it were running, it will be ignored
+		giveForegroundtc(groupID);
 		for (STSHProcess &process : job.getProcesses())
 		{
 			waitForForegroundProcess(process.getID());
 		}
+		resetForgroundtc();
 		return;
 	}
 }
@@ -260,13 +272,15 @@ static void createJob(const pipeline &p)
 	}
 	if (p.background)
 	{
+		unblockSIGCHLD();
 		job.setState(kBackground);
-
 		cout << "[" << job.getNum() << "] " << pid << endl;
 	}
 	else
 	{
+		giveForegroundtc(pid);
 		waitForForegroundProcess(pid);
+		resetForgroundtc();
 	}
 }
 
