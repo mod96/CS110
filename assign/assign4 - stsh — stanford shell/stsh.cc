@@ -28,9 +28,9 @@ static bool DEBUG = false;
 static STSHJobList joblist; // the one piece of global data we need so signal handlers can access it
 
 static void waitForForegroundProcess(pid_t pid);
-static void giveForegroundtc(pid_t pid)
+static void giveForegroundtc(pid_t pgid)
 {
-	if ((tcsetpgrp(STDIN_FILENO, pid) == -1) && (errno == ENOTTY))
+	if ((tcsetpgrp(STDIN_FILENO, pgid) == -1) && (errno != ENOTTY))
 		throw STSHException("more serious problem");
 }
 static void resetForgroundtc()
@@ -56,18 +56,19 @@ static void handleFg(const pipeline &pipeline)
 	if (!joblist.containsJob(jobNumber))
 		throw STSHException("fg " + to_string(jobNumber) + ": No such job.");
 	STSHJob &job = joblist.getJob(jobNumber);
-	job.setState(kForeground);
-	for (STSHProcess &process : job.getProcesses())
-	{
-		process.setState(kRunning);
-	}
-	joblist.synchronize(job);
 	pid_t groupID = job.getGroupID();
 	if (groupID)
 	{
+		job.setState(kForeground);
+		for (STSHProcess &process : job.getProcesses())
+		{
+			process.setState(kRunning);
+		}
+		joblist.synchronize(job);
 		killpg(groupID, SIGCONT); // if it were running, it will be ignored
 		giveForegroundtc(groupID);
-		for (STSHProcess &process : job.getProcesses())
+		std::vector<STSHProcess> &processes = job.getProcesses();
+		for (STSHProcess &process : processes)
 		{
 			waitForForegroundProcess(process.getID());
 		}
@@ -93,15 +94,15 @@ static void handleBg(const pipeline &pipeline)
 	if (!joblist.containsJob(jobNumber))
 		throw STSHException("bg " + to_string(jobNumber) + ": No such job.");
 	STSHJob &job = joblist.getJob(jobNumber);
-	job.setState(kBackground);
-	for (STSHProcess &process : job.getProcesses())
-	{
-		process.setState(kRunning);
-	}
-	joblist.synchronize(job);
 	pid_t groupID = job.getGroupID();
 	if (groupID)
 	{
+		job.setState(kBackground);
+		for (STSHProcess &process : job.getProcesses())
+		{
+			process.setState(kRunning);
+		}
+		joblist.synchronize(job);
 		killpg(groupID, SIGCONT); // if it were running, it will be ignored
 		return;
 	}
@@ -233,7 +234,7 @@ static void waitForForegroundProcess(pid_t pid)
 {
 	sigset_t empty;
 	sigemptyset(&empty);
-	while (joblist.hasForegroundJob() && joblist.containsProcess(pid) && joblist.getJobWithProcess(pid).getState() == kForeground)
+	while (joblist.hasForegroundJob() && joblist.containsProcess(pid) && joblist.getJobWithProcess(pid).getProcess(pid).getState() == kRunning)
 	{
 		sigsuspend(&empty);
 	}
@@ -249,37 +250,97 @@ static void createJob(const pipeline &p)
 {
 	blockSIGCHLD();
 	STSHJob &job = joblist.addJob(kForeground);
-	pid_t pid = fork();
-	if (pid != 0) // parent
+	pid_t pgid;
+	size_t commandSize = p.commands.size();
+	int fds[kMaxCommandLength][2];
+	for (size_t procNum = 0; procNum < commandSize; procNum++)
 	{
-		job.addProcess(STSHProcess(pid, p.commands[0]));
+		pipe(fds[procNum]);
 	}
-	if (pid == 0) // child
+	for (size_t procNum = 0; procNum < commandSize; procNum++)
 	{
-		unblockSIGCHLD();
-		pid_t selfPid = getpid();
-		setpgid(selfPid, selfPid);
-
-		char *argv[kMaxArguments + 2] = {NULL};
-		argv[0] = const_cast<char *>(p.commands[0].command);
-		for (unsigned int j = 0; j <= kMaxArguments && p.commands[0].tokens[j] != NULL; j++)
+		pid_t pid = fork();
+		if (procNum == 0)
 		{
-			argv[j + 1] = p.commands[0].tokens[j];
+			pgid = pid;
 		}
-		int err = execvp(argv[0], argv);
-		if (err < 0)
-			throw STSHException("Command not found");
+		if (pid != 0) // parent
+		{
+			job.addProcess(STSHProcess(pid, p.commands[procNum]));
+		}
+		if (pid == 0) // child
+		{
+			unblockSIGCHLD();
+			// if read file
+			if (procNum == 0 && p.input.size() > 0)
+			{
+				int fd = open(p.input.c_str(), O_RDONLY);
+				if (fd < 0)
+					throw STSHException("No such file as an input");
+				dup2(fd, STDIN_FILENO);
+				close(fd);
+			}
+			// if output file
+			if (procNum == commandSize - 1 && p.output.size() > 0)
+			{
+				int fd = open(p.output.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
+				if (fd < 0)
+					throw STSHException("Something went wrong with opening output file.");
+				dup2(fd, STDOUT_FILENO);
+				close(fd);
+			}
+
+			// writer
+			if (procNum < commandSize - 1)
+				dup2(fds[procNum][1], STDOUT_FILENO);
+			// reader
+			if (procNum > 0)
+				dup2(fds[procNum - 1][0], STDIN_FILENO);
+			for (size_t procNum2 = 0; procNum2 < commandSize; procNum2++)
+			{
+				close(fds[procNum2][0]);
+				close(fds[procNum2][1]);
+			}
+			pid_t selfPid = getpid();
+			setpgid(selfPid, pgid);
+
+			char *argv[kMaxArguments + 2] = {NULL};
+			argv[0] = const_cast<char *>(p.commands[procNum].command);
+			for (unsigned int j = 0; j <= kMaxArguments && p.commands[procNum].tokens[j] != NULL; j++)
+			{
+				argv[j + 1] = p.commands[procNum].tokens[j];
+			}
+			int err = execvp(argv[0], argv);
+			if (err < 0)
+				throw STSHException("Command not found");
+		}
 	}
+	for (size_t procNum = 0; procNum < commandSize; procNum++)
+	{
+		close(fds[procNum][0]);
+		close(fds[procNum][1]);
+	}
+	// now, only parent exists
 	if (p.background)
 	{
 		unblockSIGCHLD();
 		job.setState(kBackground);
-		cout << "[" << job.getNum() << "] " << pid << endl;
+		cout << "[" << job.getNum() << "]";
+		std::vector<STSHProcess> &processes = job.getProcesses();
+		for (STSHProcess &proc : processes)
+		{
+			cout << " " << proc.getID();
+		}
+		cout << endl;
 	}
 	else
 	{
-		giveForegroundtc(pid);
-		waitForForegroundProcess(pid);
+		giveForegroundtc(pgid);
+		std::vector<STSHProcess> &processes = job.getProcesses();
+		for (STSHProcess &proc : processes)
+		{
+			waitForForegroundProcess(proc.getID());
+		}
 		resetForgroundtc();
 	}
 }
