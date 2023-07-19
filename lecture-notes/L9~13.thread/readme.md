@@ -753,14 +753,14 @@ int main(int argc, char *argv[]) {
 
 We are going to discuss five primary ideas:
 1) The binary lock
-   * Using a mutex, we construct a single-owner lock. mutex is unlocked and brackets critical regions of code that are matched with lock  and unlock calls on the mutex.
+   * Using a `mutex`, we construct a single-owner lock. mutex is unlocked and brackets critical regions of code that are matched with lock  and unlock calls on the mutex.
 2) A generalized counter
-   * When we use a semaphore, we can track the use of a resource, be it empty buffers, full buffers, available network connection, or what have you.
+   * When we use a `semaphore`, we can track the use of a resource, be it empty buffers, full buffers, available network connection, or what have you.
 3) A binary rendezvous
-   * The rendezvous semaphore is initialized to 0. When thread A gets to the point that it needs to know that another thread has made enough progress, it can wait on the rendezvous semaphore. After completing the necessary task, B will signal it.
-   * If you need a bidirectional rendezvous where both threads need to wait for the other, you can add another semaphore in the reverse direction (e.g. the wait and signal calls inverted).
+   * The `rendezvous semaphore` is initialized to 0. When thread A gets to the point that it needs to know that another thread has made enough progress, it can wait on the rendezvous semaphore. After completing the necessary task, B will signal it.
+   * If you need a bidirectional rendezvous where both threads need to wait for the other, you can add another semaphore in the reverse direction (e.g. the wait and signal calls inverted). But be careful with dead lock.
 4) A generalized rendezvous
-   * The generalized rendezvous is a combination of binary rendezvous and generalized counter, where a single semaphore is used to record how many times something has occurred.
+   * The generalized rendezvous is a combination of `binary rendezvous` and `generalized counter`, where a single semaphore is used to record how many times something has occurred.
    * For example, if thread A spawned 5 thread Bs and needs to wait for all of them make a certain amount of progress before advancing, a generalized rendezvous might be used. The generalized rendezvous is initialized to 0. When A needs to sync up with the others, it will call wait on the semaphore in a loop, one time for each thread it is syncing up with. If A gets to the rendezvous point before the threads have finished, it will block, waking to "count" each child as it signals and eventually move on when all dependent threads have checked back. If all the B threads finish before A arrives at the rendezvous point, it will quickly decrement the multiply-incremented semaphore, once for each thread, and move on without blocking.
    * As with the generalized counter, it’s occasionally possible to use thread::join instead of semaphore::wait, but that requires the child threads fully exit before the joining parent is notified, and that’s not always what you want (though if it is, then join is just fine).
 5) Layered construction
@@ -797,16 +797,165 @@ static bool getInspectionOutcome() {
 }
 ```
 
-The first struct we will look at is the inspection struct:
+The first global struct we will look at is the inspection struct:
 ```cc
 struct inspection {
-  mutex available;
-  semaphore requested;
-  semaphore finished;
-  bool passed;
+  mutex available; // only one clerk can attach with manager(or, only one cone)
+  semaphore requested; // signaling 'hey manager i have an ice cream cone for you'
+  semaphore finished; // 'hey clerk, here's your ice cream cone'
+  bool passed; // this does not have to be atomic. only one thread will use this at a time.
 } inspection;
 ```
 This struct coordinates between the clerk and the manager.
 The `available` mutex ensures the manager's undivided attention, so the single manager can only inspect one cone cone at a time. The `requested` and `finished` semaphores coordinate a bi-directional rendezvous between the clerk and the manager. The `passed` bool provides the approval for a single cone.
 
+The second global struct we will look at is the checkout struct:
+```cc
+struct checkout {
+  checkout(): nextPlaceInLine(0) {}
+  atomic<unsigned int> nextPlaceInLine; // thread-safe!
+  semaphore customers[kNumCustomers];
+  semaphore waitingCustomers;
+} checkout;
+```
+The `customers` array-based queue of semaphores allows the cashier to tell the customers that they have paid. `waitingCustomers` semaphore informs the cashier that there are customers waiting to pay.
 
+### The Customer function
+
+Customers in our ice cream store, order cones, browse while waiting for them to be made, then wait in line to pay, and then leave.
+
+```cc
+static void customer(unsigned int id, unsigned int numConesWanted) {
+  // order phase
+  vector<thread> clerks;
+  for (unsigned int i = 0; i < numConesWanted; i++)
+    clerks.push_back(thread(clerk, i, id));
+  browse();
+  for (thread& t: clerks) t.join(); // all clerks finished. meaning all cones are made.
+
+  // checkout phase
+  int place;
+  cout << oslock << "Customer " << id << " assumes position #"
+      << (place = checkout.nextPlaceInLine++) << " at the checkout counter."
+      << endl << osunlock; // no race condition for nextPlaceInLine++ since it's atomic
+  checkout.waitingCustomers.signal(); // wakes up cashier
+  checkout.customers[place].wait(); // wait for cashier to finish the job
+  cout << "Customer " << id << " has checked out and leaves the ice cream store."
+      << endl << osunlock;
+}
+
+static void browse() {
+  cout << oslock << "Customer starts to kill time." << endl << osunlock;
+  unsigned int browseTime = getBrowseTime();
+  sleep_for(browseTime);
+  cout << oslock << "Customer just killed " << double(browseTime)/1000
+      << " seconds." << endl << osunlock;
+}
+```
+
+### The Clerk function
+
+A clerk has multiple duties: make a cone, then pass it to a manager and wait for it to be inspected, then check to see if the inspection passed, and if not, make another and repeat until a well-made cone passes inspection.
+
+```cc
+static void clerk(unsigned int coneID, unsigned int customerID) {
+  bool success = false;
+  while (!success) {
+    makeCone(coneID, customerID);
+    inspection.available.lock(); // if manager is available
+    inspection.requested.signal(); // wakes up manager for inspection
+    inspection.finished.wait(); // waits for manager
+    success = inspection.passed;
+    inspection.available.unlock();
+  }
+}
+
+static void makeCone(unsigned int coneID, unsigned int customerID) {
+  cout << oslock << " Clerk starts to make ice cream cone #" << coneID
+      << " for customer #" << customerID << "." << endl << osunlock;
+  unsigned int prepTime = getPrepTime();
+  sleep_for(prepTime);
+  cout << oslock << " Clerk just spent " << double(prepTime)/1000
+      << " seconds making ice cream cone#" << coneID
+      << " for customer #" << customerID << "." << endl << osunlock;
+}
+```
+
+
+### The Manager function
+
+The manager (somehow) starts out the day knowing how many cones they will have to approve (we could probably handle this with a global "all done!" flag) The manager waits around for a clerk to hand them a cone to inspect.For each cone that needs to be approved, the manager inspects the cone, then updates the number of cones approved (locally) if it passes. If it doesn't pass, the manger waits again. When the manager has passed all necessary cones, they go home
+
+```cc
+static void manager(unsigned int numConesNeeded) {
+  unsigned int numConesAttempted = 0; // local variables secret to the manager,
+  unsigned int numConesApproved = 0; // so no locks are needed
+  while (numConesApproved < numConesNeeded) {
+    inspection.requested.wait();
+    inspectCone();
+    inspection.finished.signal();
+    numConesAttempted++;
+    if (inspection.passed) numConesApproved++;
+  }
+
+  cout << oslock << " Manager inspected a total of " << numConesAttempted
+      << " ice cream cones before approving a total of " << numConesNeeded
+      << "." << endl;
+  cout << " Manager leaves the ice cream store." << endl << osunlock;
+}
+
+static void inspectCone() {
+  cout << oslock << " Manager is presented with an ice cream cone."
+      << endl << osunlock;
+  unsigned int inspectionTime = getInspectionTime();
+  sleep_for(inspectionTime);
+  inspection.passed = getInspectionOutcome();
+  const char *verb = inspection.passed ? "APPROVED" : "REJECTED";
+  cout << oslock << " Manager spent " << double(inspectionTime)/1000
+      << " seconds analyzing presented ice cream cone and " << verb << " it."
+      << endl << osunlock;
+}
+```
+
+### The Cashier function
+
+The cashier (somehow) knows how many customers there will be during the day. Again, we could probably handle telling the cashier to go home with a global variable. The cashier first waits for a customer to enter the line, and then signals that particular customer that they have paid.
+
+```cc
+static void cashier() {
+  cout << oslock << " Cashier is ready to take customer money."
+      << endl << osunlock;
+  for (unsigned int i = 0; i < kNumCustomers; i++) {
+    checkout.waitingCustomers.wait();
+    cout << oslock << " Cashier rings up customer " << i << "."
+        << endl << osunlock;
+    checkout.customers[i].signal();
+  }
+  cout << oslock << " Cashier is all done and can go home." << endl;
+}
+```
+
+## The Main Function
+
+```cc
+int main(int argc, const char *argv[]) {
+  int totalConesOrdered = 0;
+  thread customers[kNumCustomers];
+  for (unsigned int i = 0; i < kNumCustomers; i++) {
+    int numConesWanted = getNumCones();
+    customers[i] = thread(customer, i, numConesWanted);
+    totalConesOrdered += numConesWanted;
+  }
+  thread m(manager, totalConesOrdered);
+  thread c(cashier);
+
+  for (thread& customer: customers) customer.join();
+  c.join();
+  m.join();
+  return 0;
+}
+```
+
+Different from process, it's just signaling(incrementing) semaphore, not signaling to other thread.
+
+This example prepares us for the next idea: ThreadPool. Our manager and cashier threads are just waiting around much of the time, but they are created before needing to do their work. It does take time to spin up a thread, so if we have the threads already waiting, we can use them quickly. This is similar to farm, except that now, instead of processes, we have threads.
