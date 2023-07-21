@@ -1,0 +1,4 @@
+time-server-descriptors.o: time-server-descriptors.cc server-socket.h
+client-socket.o: client-socket.cc client-socket.h
+server-socket.o: server-socket.cc server-socket.h
+subprocess.o: subprocess.cc subprocess.h subprocess-exception.h
