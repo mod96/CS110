@@ -9,12 +9,12 @@ CXX = g++
 #  -std=c++0x  go with the c++0x experimental extensions for thread support (and other nifty things)
 #  -D_GLIBCXX_USE_NANOSLEEP included for this_thread::sleep_for and this_thread::sleep_until support
 #  -D_GLIBCXX_USE_SCHED_YIELD included for this_thread::yield support
-CPPFLAGS = -g -Wall -pedantic -fPIE -O0 -std=c++0x -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX_USE_SCHED_YIELD -I/usr/class/cs110/local/include/ -I/usr/class/cs110/include
+CPPFLAGS = -g -Wall -pedantic -fPIE -O0 -std=c++0x -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX_USE_SCHED_YIELD
 
 # The LDFLAGS variable sets flags for linker
 #  -lm       link in libm (math library)
 #  -lpthread link in libpthread (thread library) to back C++11 extensions
-LDFLAGS = -lm -lpthread -L/usr/class/cs110/local/lib/ -lthreadpoolrelease -lthreads -lrand -L/usr/class/cs110/lib/socket++ -lsocket++ -Wl,-rpath=/usr/class/cs110/lib/socket++
+LDFLAGS = -lm -lpthread -L/usr/include/socket++ -lsocket++ -Wl,-rpath=/usr/include/socket++
 
 # In this section, you list the files that are part of the project.
 # If you add/change names of header/source files, here is where you

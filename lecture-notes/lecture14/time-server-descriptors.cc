@@ -5,6 +5,11 @@
 #include <cstring>      // for strlen
 #include <unistd.h>     // for write
 #include "server-socket.h"
+#include <socket++/sockstream.h>
+// sudo apt-get install libsocket++1
+// sudo apt-get install libsocket++-dev
+// find /usr/include -name sockstream.h
+// change ldflags for including socket++ lib.
 
 using namespace std;
 
@@ -18,15 +23,11 @@ static void publishTime(int client)
     struct tm *ptm = gmtime(&rawtime);
     char timestr[128]; // more than big enough
     /* size_t len = */ strftime(timestr, sizeof(timestr), "%c\n", ptm);
-    size_t numBytesWritten = 0, numBytesToWrite = strlen(timestr);
-    while (numBytesWritten < numBytesToWrite)
-    {
-        numBytesWritten += write(client,
-                                 timestr + numBytesWritten,
-                                 numBytesToWrite - numBytesWritten);
-    }
-    close(client);
-}
+
+    sockbuf sb(client);
+    iosockstream ss(&sb);
+    ss << timestr << endl;
+} // sockbuf destructor closes client
 
 int main(int argc, char *argv[])
 {
