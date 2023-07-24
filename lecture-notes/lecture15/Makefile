@@ -20,7 +20,7 @@ LDFLAGS = -lm -lpthread -L/usr/include/socket++ -lsocket++ -Wl,-rpath=/usr/inclu
 # If you add/change names of header/source files, here is where you
 # edit the Makefile.
 HEADERS = client-socket.h server-socket.h thread-pool.h subprocess.h
-PROGRAMS = time-server-descriptors.cc time-client.cc
+PROGRAMS = web-get.cc resolve-hostname.cc resolve-hostname6.cc
 EXTRAS = client-socket.cc server-socket.cc subprocess.cc
 SOURCES = $(PROGRAMS) $(EXTRAS)
 OBJECTS = $(SOURCES:.cc=.o)

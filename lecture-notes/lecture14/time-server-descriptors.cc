@@ -37,6 +37,9 @@ int main(int argc, char *argv[])
         int client = accept(server, NULL, NULL);
         publishTime(client);
     }
+    /**
+     * didn't applied ThreadPool since it will be an assignment!
+     */
 
     return 0;
 }
