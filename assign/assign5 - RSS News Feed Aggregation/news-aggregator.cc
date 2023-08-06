@@ -11,6 +11,7 @@
 #include <libxml/parser.h>
 #include <libxml/catalog.h>
 // you will almost certainly need to add more system header includes
+#include <set>
 
 // I'm not giving away too much detail here by leaking the #includes below,
 // which contribute to the official CS110 staff solution.
@@ -164,5 +165,127 @@ NewsAggregator::NewsAggregator(const string &rssFeedListURI, bool verbose) : log
  * method using multithreading while respecting the imposed constraints
  * outlined in the spec.
  */
+void NewsAggregator::processAllFeeds()
+{
+	RSSFeedList feedList(rssFeedListURI.c_str());
+	try
+	{
+		feedList.parse();
+	}
+	catch (RSSFeedListException e)
+	{
+		log.noteFullRSSFeedListDownloadFailureAndExit(rssFeedListURI);
+		return;
+	}
+	log.noteFullRSSFeedListDownloadEnd();
+	feed2articles(feedList.getFeeds());
+	log.noteAllRSSFeedsDownloadEnd();
+	return;
+}
 
-void NewsAggregator::processAllFeeds() {}
+void NewsAggregator::feed2articles(std::map<std::string, std::string> feeds)
+{
+	std::set<string> feedURLs;
+	for (auto it : feeds)
+	{
+		string feedURL = it.first;
+		string feedTitle = it.second;
+		if (feedURLs.find(feedURL) != feedURLs.end())
+		{
+			log.noteSingleFeedDownloadSkipped(feedURL);
+			continue;
+		}
+		RSSFeed feed(feedURL);
+		try
+		{
+			log.noteSingleFeedDownloadBeginning(feedURL);
+			feed.parse();
+			log.noteSingleFeedDownloadEnd(feedURL);
+
+			std::set<string> articleUrls;
+			std::vector<Article> articles;
+			for (Article article : feed.getArticles())
+			{
+				if (articleUrls.find(article.url) == articleUrls.end())
+				{
+					articleUrls.insert(article.url);
+					articles.push_back(article);
+				}
+			}
+			article2tokens(articles);
+			log.noteAllArticlesHaveBeenScheduled(feedTitle);
+		}
+		catch (RSSFeedException &e)
+		{
+			log.noteSingleFeedDownloadFailure(feedURL);
+			continue;
+		}
+	}
+}
+
+string dummyString = "-";
+void NewsAggregator::article2tokens(std::vector<Article> articles)
+{
+	/**
+	 * First sort articles with (title, url). This way, articles having same titles will neighbor each other.
+	 * And since url's order is reversed, lexicographically smallest URL will be selected at last.
+	 */
+	sort(articles.begin(), articles.end(), [](Article &a, Article &b)
+		 { return a.title != b.title ? a.title < b.title : a.url > b.url; });
+	// for (size_t idx = 0; idx < articles.size(); idx++)
+	// {
+	// 	cout << articles[idx].title << " " << articles[idx].url << endl;
+	// }
+	// cout << endl;
+	vector<string> tokensBefore;
+	Article dummy;
+	dummy.title = dummyString;
+	dummy.url = dummyString;
+	for (size_t idx = 0; idx < articles.size(); idx++)
+	{
+		Article article = articles[idx];
+		log.noteSingleArticleDownloadBeginning(article);
+		Article articleNext = idx < articles.size() - 1 ? articles[idx + 1] : dummy;
+		HTMLDocument doc(article.url);
+		try
+		{
+			doc.parse();
+			vector<string> tokens = doc.getTokens();
+			if (article.title == articleNext.title && getURLServer(article.url) == getURLServer(articleNext.url))
+			{
+				sort(tokens.begin(), tokens.end());
+				if (tokensBefore.size() > 0)
+				{
+					vector<string> smallerList;
+					set_intersection(tokensBefore.cbegin(), tokensBefore.cend(), tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
+					tokensBefore.clear();
+					tokensBefore.insert(tokensBefore.begin(), smallerList.begin(), smallerList.end());
+				}
+				else
+				{
+					tokensBefore.insert(tokensBefore.begin(), tokens.begin(), tokens.end());
+				}
+			}
+			else
+			{
+				if (tokensBefore.size())
+				{
+					sort(tokens.begin(), tokens.end());
+					vector<string> smallerList;
+					set_intersection(tokensBefore.cbegin(), tokensBefore.cend(), tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
+					index.add(article, smallerList);
+					tokensBefore.clear();
+				}
+				else
+				{
+					index.add(article, tokens);
+				}
+			}
+		}
+		catch (HTMLDocumentException e)
+		{
+			log.noteSingleArticleDownloadFailure(article);
+			continue;
+		}
+	}
+}

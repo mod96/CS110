@@ -630,6 +630,31 @@ The call to socket is precisely the same here as it was in createClientSocket. I
 
 The address of type `struct sockaddr_in` here is configured in much the same way it was in createClientSocket, except that the `sin_addr.s_addr` field should be set to a local IP address, not a remote one. The constant `INADDR_ANY` is used to state that address should represent all local addresses.
 
-The bind call simply assigns the set of local IP addresses represented by address to the provided socket `s`. Because we embedded `INADDR_ANY` within address, bind associates the supplied socket with all local IP addresses. That means once `createServerSocket` has done its job, clients can connect to any of the machine's IP addresses via the specified port.
+The `bind` call simply assigns the set of local IP addresses represented by address to the provided socket `s`. Because we embedded `INADDR_ANY` within address, bind associates the supplied socket with all local IP addresses. That means once `createServerSocket` has done its job, clients can connect to any of the machine's IP addresses via the specified port.
 
-The `listen` call is what converts the socket to be one that's willing to accept connections via `accept`. The second argument is a queue size limit, which states how many pending connection requests can accumulate and wait their turn to be accepted. If the number of outstanding requests is at the limit, additional requests are simply refused.
+The `listen` call is what converts the socket to be one that's willing to accept connections via `accept`. The second argument `backlog` is a queue size limit, which states how many pending connection requests can accumulate and wait their turn to be accepted. If the number of outstanding requests is at the limit, additional requests are simply refused. The maximum value used by most systems is 128.
+
+
+# Lecture 17: HTTP Web Proxy
+
+A web proxy server is a server that acts as a go-between from your browser to sites on the Internet. Proxies can serve many purposes:
+
+- Block access to certain websites
+- Block access to certain documents (big documents, .zip files, etc.)
+- Block country access (e.g., no documents allowed from domains hosted in Liechtenstein)
+- Act as an anonymizer to strip data from headers about what the real IP address of the client is, or by stripping out cookies or other identifying information. The Tor network, using onion routing performs this role (among other roles, such as protecting data with strong encryption)
+- Intercept image requests, serving only upside-down versions of images.
+- Intercept all traffic and redirect to kittenwar.com.
+- Cache requests for static data (e.g., images) so it can later serve local copies rather than re-request from the web.
+- Redirect to a paywall (e.g., what happens at airports)
+
+
+
+
+
+
+
+
+
+
+
