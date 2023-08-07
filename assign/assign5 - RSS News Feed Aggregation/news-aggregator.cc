@@ -11,7 +11,8 @@
 #include <libxml/parser.h>
 #include <libxml/catalog.h>
 // you will almost certainly need to add more system header includes
-#include <set>
+#include <thread>
+#include "semaphore.h"
 
 // I'm not giving away too much detail here by leaking the #includes below,
 // which contribute to the official CS110 staff solution.
@@ -185,101 +186,87 @@ void NewsAggregator::processAllFeeds()
 
 void NewsAggregator::feed2articles(std::map<std::string, std::string> feeds)
 {
-	std::set<string> feedURLs;
+	vector<thread> threads;
+	semaphore permits(childMaxNum);
 	for (auto it : feeds)
 	{
-		string feedURL = it.first;
-		string feedTitle = it.second;
-		if (feedURLs.find(feedURL) != feedURLs.end())
-		{
-			log.noteSingleFeedDownloadSkipped(feedURL);
-			continue;
-		}
-		RSSFeed feed(feedURL);
-		try
-		{
-			log.noteSingleFeedDownloadBeginning(feedURL);
-			feed.parse();
-			log.noteSingleFeedDownloadEnd(feedURL);
+		permits.wait();
+		threads.emplace_back(thread([this, it](semaphore &s)
+									{
+			s.signal(on_thread_exit);
+			string feedURL = it.first;
+			string feedTitle = it.second;
 
-			std::set<string> articleUrls;
-			std::vector<Article> articles;
-			for (Article article : feed.getArticles())
+			feedURLsLock.lock();
+			if (feedURLs.find(feedURL) != feedURLs.end())
 			{
-				if (articleUrls.find(article.url) == articleUrls.end())
-				{
-					articleUrls.insert(article.url);
-					articles.push_back(article);
-				}
+				log.noteSingleFeedDownloadSkipped(feedURL);
+				feedURLsLock.unlock();
+				return;
 			}
-			article2tokens(articles);
-			log.noteAllArticlesHaveBeenScheduled(feedTitle);
-		}
-		catch (RSSFeedException &e)
-		{
-			log.noteSingleFeedDownloadFailure(feedURL);
-			continue;
-		}
+			feedURLs.insert(feedURL);
+			feedURLsLock.unlock();
+
+			RSSFeed feed(feedURL);
+			try
+			{
+				log.noteSingleFeedDownloadBeginning(feedURL);
+				feed.parse();
+				log.noteSingleFeedDownloadEnd(feedURL);
+
+				article2tokens(feed.getArticles());
+				log.noteAllArticlesHaveBeenScheduled(feedTitle);
+			}
+			catch (RSSFeedException &e)
+			{
+				log.noteSingleFeedDownloadFailure(feedURL);
+				return;
+			} },
+									ref(permits)));
+	}
+	for (thread &t : threads)
+	{
+		t.join();
 	}
 }
 
-string dummyString = "-";
 void NewsAggregator::article2tokens(std::vector<Article> articles)
 {
 	/**
-	 * First sort articles with (title, url). This way, articles having same titles will neighbor each other.
-	 * And since url's order is reversed, lexicographically smallest URL will be selected at last.
+	 * 'result' is..
+	 * map<{title, urlServer}, {article, tokens}>
 	 */
-	sort(articles.begin(), articles.end(), [](Article &a, Article &b)
-		 { return a.title != b.title ? a.title < b.title : a.url > b.url; });
-	// for (size_t idx = 0; idx < articles.size(); idx++)
-	// {
-	// 	cout << articles[idx].title << " " << articles[idx].url << endl;
-	// }
-	// cout << endl;
-	vector<string> tokensBefore;
-	Article dummy;
-	dummy.title = dummyString;
-	dummy.url = dummyString;
-	for (size_t idx = 0; idx < articles.size(); idx++)
+	map<pair<string, string>, pair<Article, vector<string>>> result;
+	for (Article article : articles)
 	{
-		Article article = articles[idx];
+		if (articleURLs.find(article.url) != articleURLs.end())
+		{
+			log.noteSingleArticleDownloadSkipped(article);
+			continue;
+		}
+		articleURLs.insert(article.url);
 		log.noteSingleArticleDownloadBeginning(article);
-		Article articleNext = idx < articles.size() - 1 ? articles[idx + 1] : dummy;
+		pair<string, string> theKey{article.title, getURLServer(article.url)};
 		HTMLDocument doc(article.url);
 		try
 		{
 			doc.parse();
 			vector<string> tokens = doc.getTokens();
-			if (article.title == articleNext.title && getURLServer(article.url) == getURLServer(articleNext.url))
+			sort(tokens.begin(), tokens.end());
+			if (result.count(theKey) > 0)
 			{
-				sort(tokens.begin(), tokens.end());
-				if (tokensBefore.size() > 0)
+				vector<string> smallerList;
+				set_intersection(result[theKey].second.cbegin(), result[theKey].second.cend(),
+								 tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
+				result[theKey].second = smallerList;
+				if (article.url < result[theKey].first.url)
 				{
-					vector<string> smallerList;
-					set_intersection(tokensBefore.cbegin(), tokensBefore.cend(), tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
-					tokensBefore.clear();
-					tokensBefore.insert(tokensBefore.begin(), smallerList.begin(), smallerList.end());
-				}
-				else
-				{
-					tokensBefore.insert(tokensBefore.begin(), tokens.begin(), tokens.end());
+					result[theKey].first = article;
 				}
 			}
 			else
 			{
-				if (tokensBefore.size())
-				{
-					sort(tokens.begin(), tokens.end());
-					vector<string> smallerList;
-					set_intersection(tokensBefore.cbegin(), tokensBefore.cend(), tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
-					index.add(article, smallerList);
-					tokensBefore.clear();
-				}
-				else
-				{
-					index.add(article, tokens);
-				}
+				result[theKey] = {article, tokens};
 			}
 		}
 		catch (HTMLDocumentException e)
@@ -288,4 +275,11 @@ void NewsAggregator::article2tokens(std::vector<Article> articles)
 			continue;
 		}
 	}
+	// sequential adding to the index. But since this function is multi threaded, need lock.
+	indexLock.lock();
+	for (auto it : result)
+	{
+		index.add(it.second.first, it.second.second);
+	}
+	indexLock.unlock();
 }

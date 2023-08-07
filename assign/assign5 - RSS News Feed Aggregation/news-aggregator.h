@@ -11,7 +11,7 @@
 #include <string>
 #include "log.h"
 #include "rss-index.h"
-#include <unordered_set>
+#include <set>
 #include <mutex>
 
 using namespace std;
@@ -70,9 +70,11 @@ private:
   const static int grandchildMaxNum = 8;
   const static int grandchildLimit = 18;
 
-  static std::mutex indexLock;
-  static std::mutex urlSetLock;
-  static std::unordered_set<std::string> urlSet;
+  std::mutex indexLock;
+  std::mutex feedURLsLock;
+  std::mutex articleURLsLock;
+  std::set<std::string> feedURLs;
+  std::set<std::string> articleURLs;
 
   /**
    * Constructor: NewsAggregator

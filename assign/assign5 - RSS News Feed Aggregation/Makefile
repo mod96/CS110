@@ -12,14 +12,15 @@ NA_LIB_SRC = news-aggregator.cc \
 	     rss-feed-list.cc \
 	     html-document.cc \
 	     rss-index.cc \
-		 ostreamlock.cc
+		 ostreamlock.cc \
+		 semaphore.cc
 
 WARNINGS = -Wall -pedantic
 DEPS = -MMD -MF $(@:.o=.d)
 DEFINES = -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX_USE_SCHED_YIELD
-INCLUDES = -I/usr/include -I/usr/include/libxml2
+INCLUDES = -I/usr/include -I/usr/include/libxml2 -I/cs110/include
 
-CXXFLAGS = -g $(WARNINGS) -O0 -std=c++0x $(DEPS) $(DEFINES) $(INCLUDES)
+CXXFLAGS = -g $(WARNINGS) -O0 -std=c++0x $(DEPS) $(DEFINES) $(INCLUDES) -pthread
 LDFLAGS = -lm -lxml2 -pthread
 
 NA_LIB_OBJ = $(patsubst %.cc,%.o,$(patsubst %.S,%.o,$(NA_LIB_SRC)))
