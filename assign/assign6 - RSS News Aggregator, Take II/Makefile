@@ -2,7 +2,7 @@
 
 PROGS = aggregate tptest
 EXTRA_PROGS = tpcustomtest
-CXX = /usr/bin/g++-5
+CXX = g++
 
 NA_LIB_SRC = news-aggregator.cc \
 	     log.cc \
@@ -11,17 +11,22 @@ NA_LIB_SRC = news-aggregator.cc \
 	     rss-feed.cc \
 	     rss-feed-list.cc \
 	     html-document.cc \
-	     rss-index.cc
+	     rss-index.cc \
+		 ostreamlock.cc \
+		 thread-pool.cc \
+		 semaphore.cc
 
-TP_LIB_SRC = thread-pool.cc
+TP_LIB_SRC = ostreamlock.cc \
+		 	 thread-pool.cc \
+		     semaphore.cc
 
 WARNINGS = -Wall -pedantic
 DEPS = -MMD -MF $(@:.o=.d)
 DEFINES = -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX_USE_SCHED_YIELD
-INCLUDES = -I/afs/ir/class/cs110/local/include -I/usr/include/libxml2
+INCLUDES = -I/usr/include -I/usr/include/libxml2 -I/cs110/include
 
-CXXFLAGS = -g $(WARNINGS) -O0 -std=c++14 $(DEPS) $(DEFINES) $(INCLUDES)
-LDFLAGS = -lm -lxml2 -L/afs/ir/class/cs110/local/lib -lrand -lthreads -pthread
+CXXFLAGS = -g $(WARNINGS) -O0 -std=c++14 $(DEPS) $(DEFINES) $(INCLUDES) -pthread
+LDFLAGS = -lm -lxml2 -pthread
 
 NA_LIB_OBJ = $(patsubst %.cc,%.o,$(patsubst %.S,%.o,$(NA_LIB_SRC)))
 NA_LIB_DEP = $(patsubst %.o,%.d,$(NA_LIB_OBJ))
