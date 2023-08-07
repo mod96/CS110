@@ -12,7 +12,6 @@
 #include <libxml/catalog.h>
 // you will almost certainly need to add more system header includes
 #include <thread>
-#include "semaphore.h"
 
 // I'm not giving away too much detail here by leaking the #includes below,
 // which contribute to the official CS110 staff solution.
@@ -153,7 +152,7 @@ void NewsAggregator::queryIndex() const
  * initialize any additional fields you add to the private section
  * of the class definition.
  */
-NewsAggregator::NewsAggregator(const string &rssFeedListURI, bool verbose) : log(verbose), rssFeedListURI(rssFeedListURI), built(false) {}
+NewsAggregator::NewsAggregator(const string &rssFeedListURI, bool verbose) : log(verbose), rssFeedListURI(rssFeedListURI), built(false), grandChildPermits(grandchildMaxNum) {}
 
 /**
  * Private Method: processAllFeeds
@@ -237,27 +236,60 @@ void NewsAggregator::article2tokens(std::vector<Article> articles)
 	 * map<{title, urlServer}, {article, tokens}>
 	 */
 	map<pair<string, string>, pair<Article, vector<string>>> result;
+	mutex resultLock;
+	vector<thread> threads;
 	for (Article article : articles)
 	{
-		if (articleURLs.find(article.url) != articleURLs.end())
-		{
-			log.noteSingleArticleDownloadSkipped(article);
-			continue;
-		}
-		articleURLs.insert(article.url);
-		log.noteSingleArticleDownloadBeginning(article);
-		pair<string, string> theKey{article.title, getURLServer(article.url)};
-		HTMLDocument doc(article.url);
-		try
-		{
-			doc.parse();
+		grandChildPermits.wait();
+		threads.push_back(thread([this, article](map<pair<string, string>, pair<Article, vector<string>>> &result, mutex &resultLock)
+								 {
+			// grandChild thread max 18						
+			grandChildPermits.signal(on_thread_exit);
+
+			// download in the same server max 8
+			string urlServer = getURLServer(article.url);
+			serverConnectionPermitsLock.lock();
+			if (!serverConnectionPermits.count(urlServer)) {
+				serverConnectionPermits[urlServer] = new semaphore(serverConnectionMaxNum);
+			}
+			serverConnectionPermits[urlServer]->wait();
+			serverConnectionPermits[urlServer]->signal(on_thread_exit);
+			serverConnectionPermitsLock.unlock();
+
+			// skip duplicated url
+			articleURLsLock.lock();
+			if (articleURLs.find(article.url) != articleURLs.end())
+			{
+				log.noteSingleArticleDownloadSkipped(article);
+				articleURLsLock.unlock();
+				return;
+			}
+			articleURLs.insert(article.url);
+			articleURLsLock.unlock();
+
+			// setup downloading
+			pair<string, string> theKey{article.title, getURLServer(article.url)};
+			HTMLDocument doc(article.url);
+			// start downloading
+			try
+			{
+				log.noteSingleArticleDownloadBeginning(article);
+				doc.parse();
+			}
+			catch (HTMLDocumentException e)
+			{
+				log.noteSingleArticleDownloadFailure(article);
+				return;
+			} 
 			vector<string> tokens = doc.getTokens();
 			sort(tokens.begin(), tokens.end());
+
+			resultLock.lock();
 			if (result.count(theKey) > 0)
 			{
 				vector<string> smallerList;
 				set_intersection(result[theKey].second.cbegin(), result[theKey].second.cend(),
-								 tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
+								tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
 				result[theKey].second = smallerList;
 				if (article.url < result[theKey].first.url)
 				{
@@ -268,18 +300,18 @@ void NewsAggregator::article2tokens(std::vector<Article> articles)
 			{
 				result[theKey] = {article, tokens};
 			}
-		}
-		catch (HTMLDocumentException e)
-		{
-			log.noteSingleArticleDownloadFailure(article);
-			continue;
-		}
+			resultLock.unlock(); },
+								 ref(result), ref(resultLock)));
+	}
+	for (thread &t : threads)
+	{
+		t.join();
 	}
 	// sequential adding to the index. But since this function is multi threaded, need lock.
-	indexLock.lock();
 	for (auto it : result)
 	{
+		indexLock.lock();
 		index.add(it.second.first, it.second.second);
+		indexLock.unlock();
 	}
-	indexLock.unlock();
 }

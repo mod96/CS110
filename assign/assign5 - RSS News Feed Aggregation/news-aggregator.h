@@ -13,6 +13,7 @@
 #include "rss-index.h"
 #include <set>
 #include <mutex>
+#include "semaphore.h"
 
 using namespace std;
 
@@ -67,14 +68,18 @@ private:
   bool built;
 
   const static int childMaxNum = 5;
-  const static int grandchildMaxNum = 8;
-  const static int grandchildLimit = 18;
+  const static int serverConnectionMaxNum = 8;
+  const static int grandchildMaxNum = 18;
 
   std::mutex indexLock;
   std::mutex feedURLsLock;
   std::mutex articleURLsLock;
   std::set<std::string> feedURLs;
   std::set<std::string> articleURLs;
+
+  map<string, semaphore *> serverConnectionPermits;
+  mutex serverConnectionPermitsLock;
+  semaphore grandChildPermits;
 
   /**
    * Constructor: NewsAggregator
