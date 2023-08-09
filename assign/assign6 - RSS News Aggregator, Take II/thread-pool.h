@@ -15,6 +15,9 @@
 #include <thread>     // for thread
 #include <vector>     // for vector
 
+#include "semaphore.h"
+#include <queue>
+
 class ThreadPool
 {
 public:
@@ -60,6 +63,31 @@ private:
    */
   ThreadPool(const ThreadPool &original) = delete;
   ThreadPool &operator=(const ThreadPool &rhs) = delete;
+
+  /**
+   * Custom members
+   */
+  std::size_t numThreads;
+
+  std::condition_variable_any qSizeCV;
+  int qSize;
+  std::mutex qSizeLock;
+
+  std::mutex qLock;
+  std::queue<std::function<void(void)>> q;
+
+  semaphore availableWorkers;
+  std::vector<std::pair<bool, std::mutex>> workerAvailable;
+  std::vector<semaphore *> workerLock;
+  std::vector<std::function<void(void)>> thunkShare;
+
+  bool getOut;
+
+  /**
+   * Custom functions
+   */
+  void dispatcher();
+  void worker(int id);
 };
 
 #endif
