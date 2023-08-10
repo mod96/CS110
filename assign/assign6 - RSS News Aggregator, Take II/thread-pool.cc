@@ -5,11 +5,13 @@
  */
 
 #include "thread-pool.h"
+#include "ostreamlock.h"
 using namespace std;
 
 ThreadPool::ThreadPool(size_t numThreads)
     : numThreads(numThreads), wts(numThreads), qSize(0),
-      availableWorkers(0), workerAvailable(numThreads), workerLock(numThreads)
+      availableWorkers(0), workerAvailable(numThreads), workerLock(numThreads),
+      thunkShare(numThreads), getOut(false)
 {
     dt = thread([this]()
                 { dispatcher(); });
@@ -45,7 +47,7 @@ void ThreadPool::wait()
      */
     lock_guard<mutex> lg(qSizeLock);
     qSizeCV.wait(qSizeLock, [this]
-                 { return qSize > 0; });
+                 { return qSize == 0; });
 
     /**
      * Wait until all workers finish thunk.
@@ -76,8 +78,8 @@ ThreadPool::~ThreadPool()
      */
     qSizeLock.lock();
     qSize++;
-    qSizeCV.notify_all();
     qSizeLock.unlock();
+    qSizeCV.notify_all();
 
     /**
      * Since wait() has passed, no workers are running now.
@@ -109,9 +111,10 @@ void ThreadPool::dispatcher()
          */
         qSizeLock.lock();
         qSizeCV.wait(qSizeLock, [this]
-                     { return qSize == 0; });
+                     { return qSize > 0; });
         qSize--;
         qSizeLock.unlock();
+        qSizeCV.notify_all();
 
         if (getOut)
             break;
@@ -148,7 +151,7 @@ void ThreadPool::worker(int id)
         workerLock[id]->wait();
         if (getOut)
             break;
-        const function<void(void)> &thunk = thunkShare[id];
+        const function<void(void)> thunk = thunkShare[id];
         thunk();
         workerAvailable[id].second.lock();
         workerAvailable[id].first = true;
