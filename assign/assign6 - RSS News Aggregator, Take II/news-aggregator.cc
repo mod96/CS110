@@ -151,7 +151,7 @@ void NewsAggregator::queryIndex() const
  * initialize any additional fields you add to the private section
  * of the class definition.
  */
-NewsAggregator::NewsAggregator(const string &rssFeedListURI, bool verbose) : log(verbose), rssFeedListURI(rssFeedListURI), built(false) {}
+NewsAggregator::NewsAggregator(const string &rssFeedListURI, bool verbose) : log(verbose), rssFeedListURI(rssFeedListURI), built(false), childPool(childMaxNum), grandChildPool(grandChildMaxNum) {}
 
 /**
  * Private Method: processAllFeeds
@@ -165,4 +165,123 @@ NewsAggregator::NewsAggregator(const string &rssFeedListURI, bool verbose) : log
  * outlined in the spec.
  */
 
-void NewsAggregator::processAllFeeds() {}
+void NewsAggregator::processAllFeeds()
+{
+	RSSFeedList feedList(rssFeedListURI.c_str());
+	try
+	{
+		feedList.parse();
+	}
+	catch (RSSFeedListException e)
+	{
+		log.noteFullRSSFeedListDownloadFailureAndExit(rssFeedListURI);
+		return;
+	}
+	log.noteFullRSSFeedListDownloadEnd();
+	feed2articles(feedList.getFeeds());
+	log.noteAllRSSFeedsDownloadEnd();
+	return;
+}
+
+void NewsAggregator::feed2articles(std::map<std::string, std::string> feeds)
+{
+	for (auto it : feeds)
+	{
+		childPool.schedule([this, it]()
+						   {
+			string feedURL = it.first;
+			string feedTitle = it.second;
+
+			feedURLsLock.lock();
+			if (feedURLs.find(feedURL) != feedURLs.end())
+			{
+				log.noteSingleFeedDownloadSkipped(feedURL);
+				feedURLsLock.unlock();
+				return;
+			}
+			feedURLs.insert(feedURL);
+			feedURLsLock.unlock();
+
+			RSSFeed feed(feedURL);
+			try
+			{
+				log.noteSingleFeedDownloadBeginning(feedURL);
+				feed.parse();
+				log.noteSingleFeedDownloadEnd(feedURL);
+
+				article2tokens(feed.getArticles());
+				log.noteAllArticlesHaveBeenScheduled(feedTitle);
+			}
+			catch (RSSFeedException &e)
+			{
+				log.noteSingleFeedDownloadFailure(feedURL);
+				return;
+			} });
+	}
+	childPool.wait();
+}
+
+void NewsAggregator::article2tokens(std::vector<Article> articles)
+{
+	for (Article article : articles)
+	{
+		grandChildPool.schedule([this, article]()
+								{
+			// download in the same server max 8
+			string urlServer = getURLServer(article.url);
+
+			// skip duplicated url
+			articleURLsLock.lock();
+			if (articleURLs.find(article.url) != articleURLs.end())
+			{
+				log.noteSingleArticleDownloadSkipped(article);
+				articleURLsLock.unlock();
+				return;
+			}
+			articleURLs.insert(article.url);
+			articleURLsLock.unlock();
+
+			// setup downloading
+			pair<string, string> theKey{article.title, getURLServer(article.url)};
+			HTMLDocument doc(article.url);
+			// start downloading
+			try
+			{
+				log.noteSingleArticleDownloadBeginning(article);
+				doc.parse();
+			}
+			catch (HTMLDocumentException e)
+			{
+				log.noteSingleArticleDownloadFailure(article);
+				return;
+			} 
+			vector<string> tokens = doc.getTokens();
+			sort(tokens.begin(), tokens.end());
+
+			resultLock.lock();
+			if (result.count(theKey) > 0)
+			{
+				vector<string> smallerList;
+				set_intersection(result[theKey].second.cbegin(), result[theKey].second.cend(),
+								tokens.cbegin(), tokens.cend(), back_inserter(smallerList));
+				result[theKey].second = smallerList;
+				if (article.url < result[theKey].first.url)
+				{
+					result[theKey].first = article;
+				}
+			}
+			else
+			{
+				result[theKey] = {article, tokens};
+			}
+			resultLock.unlock(); });
+	}
+	grandChildPool.wait();
+	// sequential adding to the index. But since this function is multi threaded, need lock.
+	for (auto it : result)
+	{
+		indexLock.lock();
+		index.add(it.second.first, it.second.second);
+		indexLock.unlock();
+	}
+}

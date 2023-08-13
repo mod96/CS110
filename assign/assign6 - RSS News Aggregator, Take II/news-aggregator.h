@@ -8,6 +8,7 @@
 
 #pragma once
 #include <string>
+#include <set>
 #include "log.h"
 #include "rss-index.h"
 #include "thread-pool.h"
@@ -62,6 +63,25 @@ private:
   RSSIndex index;
   bool built;
 
+  const static int childMaxNum = 3;
+  const static int grandChildMaxNum = 20;
+
+  ThreadPool childPool;
+  ThreadPool grandChildPool;
+
+  std::mutex indexLock;
+  std::mutex feedURLsLock;
+  std::mutex articleURLsLock;
+  std::set<std::string> feedURLs;
+  std::set<std::string> articleURLs;
+
+  /**
+   * 'result' is..
+   * map<{title, urlServer}, {article, tokens}>
+   */
+  std::map<std::pair<std::string, std::string>, std::pair<Article, std::vector<std::string>>> result;
+  std::mutex resultLock;
+
   /**
    * Constructor: NewsAggregator
    * ---------------------------
@@ -78,6 +98,8 @@ private:
    * of an unbounded number of threads.
    */
   void processAllFeeds();
+  void feed2articles(std::map<std::string, std::string> feeds);
+  void article2tokens(std::vector<Article> articles);
 
   /**
    * Copy Constructor, Assignment Operator
