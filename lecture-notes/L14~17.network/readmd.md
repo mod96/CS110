@@ -637,17 +637,27 @@ The `listen` call is what converts the socket to be one that's willing to accept
 
 # Lecture 17: HTTP Web Proxy
 
-A web proxy server is a server that acts as a go-between from your browser to sites on the Internet. Proxies can serve many purposes:
+A `web proxy server` is a server that acts as a go-between from your browser to sites on the Internet. Proxies can serve many purposes:
 
 - Block access to certain websites
 - Block access to certain documents (big documents, .zip files, etc.)
 - Block country access (e.g., no documents allowed from domains hosted in Liechtenstein)
-- Act as an anonymizer to strip data from headers about what the real IP address of the client is, or by stripping out cookies or other identifying information. The Tor network, using onion routing performs this role (among other roles, such as protecting data with strong encryption)
-- Intercept image requests, serving only upside-down versions of images.
+- Act as an anonymizer to strip data from headers about what the real IP address of the client is, or by stripping out cookies or other identifying information. The [Tor network](https://en.wikipedia.org/wiki/Tor_(network)), using onion routing performs this role (among other roles, such as protecting data with strong encryption)
+- Intercept image requests, [serving only upside-down versions of images](http://www.ex-parrot.com/pete/upside-down-ternet.html).
 - Intercept all traffic and redirect to kittenwar.com.
 - Cache requests for static data (e.g., images) so it can later serve local copies rather than re-request from the web.
 - Redirect to a paywall (e.g., what happens at airports)
 
+DETAILS ON ASSIGN 7
+
+`MapReduce` is a parallel, distributed programming model and implementation used to process and generate large data sets.
+- The `map` component of a MapReduce job typically parses input data and distills it down to some intermediate result.
+- The `reduce` component of a MapReduce job collates these intermediate results and distills them down even further to the desired output.
+- The pipeline of processes involved in a MapReduce job is captured by the below
+illustration: ![](./img/mapreduce.PNG)
+- The processes shaded in yellow are programs specific to the data set being processed, whereas the processes shaded in green are present in all MapReduce pipelines.
+- We'll invest some energy over the next several slides explaining what a mapper, a
+reducer, and the group-by-key processes look like.
 
 
 
