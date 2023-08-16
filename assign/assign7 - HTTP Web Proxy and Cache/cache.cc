@@ -338,3 +338,15 @@ string HTTPCache::getHostname() const
 		throw HTTPCacheConfigException("Could not determine the name of your machine.");
 	return name;
 }
+
+void HTTPCache::lock(const HTTPRequest &request)
+{
+	size_t hashNum = hashRequest(request) % CACHE_MUTEXES;
+	locks[hashNum].lock();
+}
+
+void HTTPCache::unlock(const HTTPRequest &request)
+{
+	size_t hashNum = hashRequest(request) % CACHE_MUTEXES;
+	locks[hashNum].unlock();
+}

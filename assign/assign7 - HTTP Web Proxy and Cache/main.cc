@@ -1,7 +1,7 @@
 /**
- * Provides a simple implementation of an http proxy and web cache.  
+ * Provides a simple implementation of an http proxy and web cache.
  * Save for the parsing of the command line, all bucks are passed
- * to an HTTPProxy proxy instance, which repeatedly loops and waits 
+ * to an HTTPProxy proxy instance, which repeatedly loops and waits
  * for proxied requests to come through.
  */
 
@@ -22,9 +22,11 @@ using namespace std;
  * some pipe is broken.  We actually just print a short message but
  * otherwise allow execution to continue.
  */
-static void alertOfBrokenPipe(int unused) {
-  cerr << oslock << "Client closed socket.... aborting response." 
-       << endl << osunlock;
+static void alertOfBrokenPipe(int unused)
+{
+  cerr << oslock << "Client closed socket.... aborting response."
+       << endl
+       << osunlock;
 }
 
 /**
@@ -32,8 +34,10 @@ static void alertOfBrokenPipe(int unused) {
  * -------------------------
  * Simple fault handler that ends the program.
  */
-static void killProxyServer(int unused) {
-  cout << endl << "Shutting down proxy." << endl;
+static void killProxyServer(int unused)
+{
+  cout << endl
+       << "Shutting down proxy." << endl;
   exit(0);
 }
 
@@ -44,7 +48,8 @@ static void killProxyServer(int unused) {
  * pipes.  The alternative is to let a single broken pipe bring
  * down the entire proxy.
  */
-static void handleBrokenPipes() {
+static void handleBrokenPipes()
+{
   struct sigaction act;
   act.sa_handler = alertOfBrokenPipe;
   sigemptyset(&act.sa_mask);
@@ -55,10 +60,11 @@ static void handleBrokenPipes() {
 /**
  * Function: handleKillRequests
  * ----------------------------
- * Configures the entire system to quit on 
+ * Configures the entire system to quit on
  * ctrl-c and ctrl-z.
  */
-static void handleKillRequests() {
+static void handleKillRequests()
+{
   struct sigaction act;
   act.sa_handler = killProxyServer;
   sigemptyset(&act.sa_mask);
@@ -75,26 +81,30 @@ static void handleKillRequests() {
  * passes the buck to an instance of the HTTPProxy class.
  */
 static const int kFatalHTTPProxyError = 1;
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
   handleKillRequests();
   handleBrokenPipes();
-  try {
+  try
+  {
     HTTPProxy proxy(argc, argv);
     cout << "Listening for all incoming traffic on port " << proxy.getPortNumber() << "." << endl;
-    if (proxy.isUsingProxy()) {
-      cout << "Requests will be directed toward another proxy at " 
+    if (proxy.isUsingProxy())
+    {
+      cout << "Requests will be directed toward another proxy at "
            << proxy.getProxyServer() << ":" << proxy.getProxyPortNumber() << "." << endl;
     }
-	ThreadPool pool(64);
-    while (true) {
-	  pool.schedule([&proxy]{proxy.acceptAndProxyRequest();});
+    while (true)
+    {
+      proxy.acceptAndProxyRequest();
     }
-	pool.wait();
-  } catch (const HTTPProxyException& hpe) {
+  }
+  catch (const HTTPProxyException &hpe)
+  {
     cerr << "Fatal Error: " << hpe.what() << endl;
     cerr << "Exiting..... " << endl;
     return kFatalHTTPProxyError;
   }
-  
+
   return 0; // never gets here, but it feels wrong to not type it
 }

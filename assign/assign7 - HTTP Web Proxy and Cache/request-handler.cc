@@ -34,6 +34,7 @@ void HTTPRequestHandler::serviceRequest(const pair<int, string> &connection) thr
 	HTTPResponse response;
 	if (blacklist.serverIsAllowed(request.getServer()))
 	{
+		cache.lock(request);
 		if (!cache.containsCacheEntry(request, response))
 		{
 			// request to origin
@@ -49,6 +50,7 @@ void HTTPRequestHandler::serviceRequest(const pair<int, string> &connection) thr
 			if (cache.shouldCache(request, response))
 				cache.cacheEntry(request, response);
 		}
+		cache.unlock(request);
 	}
 	else
 	{

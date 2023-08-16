@@ -14,6 +14,7 @@
 #include "request.h"
 #include "response.h"
 
+const size_t CACHE_MUTEXES = 997;
 class HTTPCache
 {
 public:
@@ -44,6 +45,12 @@ public:
    */
   void setMaxAge(long maxAge) { this->maxAge = maxAge; }
 
+  /**
+   * make HTTPCache class thread-safe.
+   */
+  void lock(const HTTPRequest &request);
+  void unlock(const HTTPRequest &request);
+
 private:
   std::string getCacheDirectory() const;
   size_t hashRequest(const HTTPRequest &request) const;
@@ -61,6 +68,8 @@ private:
 
   long maxAge;
   std::string cacheDirectory;
+
+  std::mutex locks[CACHE_MUTEXES];
 };
 
 #endif

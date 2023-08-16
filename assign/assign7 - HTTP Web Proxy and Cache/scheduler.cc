@@ -8,7 +8,10 @@
 #include <utility>
 using namespace std;
 
+void HTTPProxyScheduler::setProxy(const std::string &server, unsigned short port) {}
+
 void HTTPProxyScheduler::scheduleRequest(int clientfd, const string &clientIPAddress) throw()
 {
-	requestHandler.serviceRequest(make_pair(clientfd, clientIPAddress));
+	pool.schedule([this, clientfd, clientIPAddress]
+				  { requestHandler.serviceRequest(make_pair(clientfd, clientIPAddress)); });
 }
