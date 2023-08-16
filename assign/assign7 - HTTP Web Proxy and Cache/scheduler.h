@@ -15,7 +15,7 @@
 class HTTPProxyScheduler
 {
 public:
-  HTTPProxyScheduler(): pool(64) {}
+  HTTPProxyScheduler() : pool(64) {}
   void setProxy(const std::string &server, unsigned short port);
   void clearCache() { requestHandler.clearCache(); }
   void setCacheMaxAge(long maxAge) { requestHandler.setCacheMaxAge(maxAge); }
@@ -24,6 +24,10 @@ public:
 private:
   HTTPRequestHandler requestHandler;
   ThreadPool pool;
+
+  std::string proxyServer;
+  unsigned short proxyPortNumber;
+  bool usingProxy = false;
 };
 
 #endif

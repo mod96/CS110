@@ -61,7 +61,7 @@ public:
    * a new name.  Instead, the line (after being right-trimmed) is providing a continuation
    * of the previous line's value.
    */
-  void ingestHeader(std::istream &instream, const std::string &clientIPAddress);
+  bool ingestHeader(std::istream &instream, const std::string &clientIPAddress);
 
   /**
    * Ingests everything after the blank line following the header.

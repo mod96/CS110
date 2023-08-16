@@ -48,19 +48,31 @@ void HTTPRequest::ingestRequestLine(istream &instream) throw(HTTPBadRequestExcep
   server.erase(pos);
 }
 
-void HTTPRequest::ingestHeader(istream &instream, const string &clientIPAddress)
+bool HTTPRequest::ingestHeader(istream &instream, const string &clientIPAddress)
 {
   requestHeader.ingestHeader(instream);
   requestHeader.addHeader("x-forwarded-proto", "http");
   if (requestHeader.containsName("x-forwarded-for"))
   {
     string original = requestHeader.getValueAsString("x-forwarded-for");
+    // check cycle
+    stringstream ss(original);
+    while (ss.good())
+    {
+      string substr;
+      getline(ss, substr, ',');
+      if (original == substr)
+      {
+        return false;
+      }
+    }
     requestHeader.addHeader("x-forwarded-for", original + "," + clientIPAddress);
   }
   else
   {
     requestHeader.addHeader("x-forwarded-for", clientIPAddress);
   }
+  return true;
 }
 
 bool HTTPRequest::containsName(const string &name) const
@@ -78,7 +90,7 @@ void HTTPRequest::ingestPayload(istream &instream)
 ostream &operator<<(ostream &os, const HTTPRequest &rh)
 {
   const string &path = rh.path;
-  os << rh.method << " " << path << " " << rh.protocol << "\r\n";
+  os << rh.method << " " << kProtocolPrefix + rh.server + path << " " << rh.protocol << "\r\n";
   os << rh.requestHeader;
   os << "\r\n"; // blank line not printed by request header
   os << rh.payload;

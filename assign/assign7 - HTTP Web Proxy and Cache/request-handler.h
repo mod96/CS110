@@ -20,11 +20,16 @@ private:
 	HTTPBlacklist blacklist;
 	HTTPCache cache;
 
+	std::string proxyServer;
+	unsigned short proxyPortNumber;
+	bool usingProxy = false;
+
 public:
 	HTTPRequestHandler();
 	void serviceRequest(const std::pair<int, std::string> &connection) throw();
 	void clearCache();
 	void setCacheMaxAge(long maxAge);
+	void setProxy(const std::string &server, unsigned short port);
 };
 
 #endif

@@ -151,6 +151,11 @@ void HTTPProxy::configureFromArgumentList(int argc, char *argv[]) throw(HTTPProx
 	{
 		proxyPortNumber = portNumber;
 	}
+
+	if (usingProxy)
+	{
+		scheduler.setProxy(proxyServer, proxyPortNumber);
+	}
 }
 
 /**

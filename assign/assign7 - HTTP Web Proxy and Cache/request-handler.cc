@@ -9,6 +9,7 @@
 #include "request.h"
 #include "client-socket.h"
 #include <socket++/sockstream.h> // for sockbuf, iosockstream
+#include "ostreamlock.h"
 using namespace std;
 
 HTTPRequestHandler::HTTPRequestHandler()
@@ -27,30 +28,53 @@ void HTTPRequestHandler::serviceRequest(const pair<int, string> &connection) thr
 	// read
 	HTTPRequest request;
 	request.ingestRequestLine(ss);
-	request.ingestHeader(ss, clientIPAddress);
+	bool isNotCyclic = request.ingestHeader(ss, clientIPAddress);
 	request.ingestPayload(ss);
-	// cout << request << endl;
+
+	cout << oslock << "[" << request.getMethod() << "] "
+		 << "Server: " << request.getServer() << ", Path: " << request.getPath() << endl
+		 << osunlock;
+	// cout << oslock << request << endl
+	// 	 << osunlock;
 
 	HTTPResponse response;
 	if (blacklist.serverIsAllowed(request.getServer()))
 	{
-		cache.lock(request);
-		if (!cache.containsCacheEntry(request, response))
+		if (!isNotCyclic)
 		{
-			// request to origin
-			int originSockFd = createClientSocket(request.getServer(), request.getPort());
-			sockbuf sb2(originSockFd);
-			iosockstream ss2(&sb2);
-			ss2 << request;
-			ss2.flush();
-
-			// set response
-			response.ingestResponseHeader(ss2);
-			response.ingestPayload(ss2);
-			if (cache.shouldCache(request, response))
-				cache.cacheEntry(request, response);
+			// set gateway timeout
+			response.setResponseCode(504);
+			response.setProtocol("HTTP/1.0");
+			response.setPayload("Gateway Timed-out");
 		}
-		cache.unlock(request);
+		else
+		{
+			cache.lock(request);
+			if (!cache.containsCacheEntry(request, response))
+			{
+				// request to origin
+				int originSockFd;
+				if (usingProxy)
+				{
+					originSockFd = createClientSocket(proxyServer, proxyPortNumber);
+				}
+				else
+				{
+					originSockFd = createClientSocket(request.getServer(), request.getPort());
+				}
+				sockbuf sb2(originSockFd);
+				iosockstream ss2(&sb2);
+				ss2 << request;
+				ss2.flush();
+
+				// set response
+				response.ingestResponseHeader(ss2);
+				response.ingestPayload(ss2);
+				if (cache.shouldCache(request, response))
+					cache.cacheEntry(request, response);
+			}
+			cache.unlock(request);
+		}
 	}
 	else
 	{
@@ -72,4 +96,12 @@ void HTTPRequestHandler::clearCache()
 void HTTPRequestHandler::setCacheMaxAge(long maxAge)
 {
 	cache.setMaxAge(maxAge);
+}
+
+// set proxy
+void HTTPRequestHandler::setProxy(const std::string &server, unsigned short port)
+{
+	proxyServer = server;
+	proxyPortNumber = port;
+	usingProxy = true;
 }

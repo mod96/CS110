@@ -8,7 +8,13 @@
 #include <utility>
 using namespace std;
 
-void HTTPProxyScheduler::setProxy(const std::string &server, unsigned short port) {}
+void HTTPProxyScheduler::setProxy(const std::string &server, unsigned short port)
+{
+	proxyServer = server;
+	proxyPortNumber = port;
+	usingProxy = true;
+	requestHandler.setProxy(server, port);
+}
 
 void HTTPProxyScheduler::scheduleRequest(int clientfd, const string &clientIPAddress) throw()
 {
