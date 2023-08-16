@@ -11,9 +11,17 @@
 #include <utility>
 #include <string>
 
+#include "blacklist.h"
+#include "cache.h"
+
 class HTTPRequestHandler
 {
+private:
+	HTTPBlacklist blacklist;
+	HTTPCache cache;
+
 public:
+	HTTPRequestHandler();
 	void serviceRequest(const std::pair<int, std::string> &connection) throw();
 	void clearCache();
 	void setCacheMaxAge(long maxAge);
