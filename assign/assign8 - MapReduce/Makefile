@@ -1,5 +1,5 @@
 # CS110 Assignment 8 Makefile
-CXX = /usr/bin/g++-5
+CXX = g++
 
 # The CPPFLAGS variable sets compile flags for g++:
 #  -g          compile with debug information
@@ -9,7 +9,7 @@ CXX = /usr/bin/g++-5
 #  -std=c++0x  go with the c++0x experimental extensions for thread support (and other nifty things)
 #  -D_GLIBCXX_USE_NANOSLEEP included for this_thread::sleep_for and this_thread::sleep_until support
 #  -D_GLIBCXX_USE_SCHED_YIELD included for this_thread::yield support
-CPPFLAGS = -g -Wall -pedantic -O0 -std=c++0x -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX_USE_SCHED_YIELD -I/afs/ir/class/cs110/local/include/ -I/afs/ir/class/cs110/include
+CPPFLAGS = -g -Wall -pedantic -O0 -std=c++0x -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX_USE_SCHED_YIELD -I/cs110/include
 
 # The LDFLAGS variable sets flags for linker
 # -lm        link to libm (math library)
@@ -17,15 +17,13 @@ CPPFLAGS = -g -Wall -pedantic -O0 -std=c++0x -D_GLIBCXX_USE_NANOSLEEP -D_GLIBCXX
 # -lthreads  link to course-specific concurrency functions and classes
 # -lrand     link to a C++11-backed random number generator module
 # -socket++  link to third party socket++ library for sockbuf and iosockstream classes
-LDFLAGS = -lm -lpthread -L/afs/ir/class/cs110/local/lib -lthreadpool -L/afs/ir/class/cs110/local/lib -lthreads -L/afs/ir/class/cs110/local/lib -lrand -L/afs/ir/class/cs110/lib/socket++ -lsocket++ -Wl,-rpath=/afs/ir/class/cs110/lib/socket++
+LDFLAGS = -lm -lpthread -L/usr/include/socket++ -lsocket++ -Wl,-rpath=/usr/include/socket++
 
 # In this section, you list the files that are part of the project.
 # If you add/change names of header/source files, here is where you
 # edit the Makefile.
 PROGRAMS = mr.cc mrm.cc mrr.cc word-count-mapper.cc word-count-reducer.cc
-EXTRAS = mapreduce-server.cc mapreduce-worker.cc mapreduce-mapper.cc mapreduce-reducer.cc \
-         client-socket.cc server-socket.cc mr-nodes.cc mr-messages.cc mr-env.cc mr-utils.cc mr-random.cc \
-         mr-names.cc
+EXTRAS = mapreduce-server.cc mapreduce-worker.cc mapreduce-mapper.cc mapreduce-reducer.cc client-socket.cc server-socket.cc mr-nodes.cc mr-messages.cc mr-env.cc mr-utils.cc mr-random.cc mr-names.cc thread-pool.cc ostreamlock.cc semaphore.cc
 HEADERS = $(EXTRAS:.cc=.h) mapreduce-server-exception.h thread-pool.h
 SOURCES = $(PROGRAMS) $(EXTRAS)
 OBJECTS = $(SOURCES:.cc=.o)
@@ -39,19 +37,19 @@ directories:
 	mkdir -p files/intermediate
 	mkdir -p files/output
 
-mr: mr.o mapreduce-server.o server-socket.o client-socket.o mr-nodes.o mr-messages.o mr-env.o mr-utils.o mr-names.o
+mr: mr.o mapreduce-server.o server-socket.o client-socket.o mr-nodes.o mr-messages.o mr-env.o mr-utils.o mr-names.o thread-pool.o ostreamlock.o semaphore.o
 	$(CXX) $(CPPFLAGS) -o $@ $^ $(LDFLAGS)
 
-mrm: mrm.o mapreduce-worker.o mapreduce-mapper.o client-socket.o mr-messages.o mr-env.o mr-names.o
+mrm: mrm.o mapreduce-worker.o mapreduce-mapper.o client-socket.o mr-messages.o mr-env.o mr-names.o thread-pool.o ostreamlock.o semaphore.o
 	$(CXX) $(CPPFLAGS) -o $@ $^ $(LDFLAGS)
 
-mrr: mrr.o mapreduce-worker.o mapreduce-reducer.o client-socket.o mr-messages.o mr-env.o mr-names.o
+mrr: mrr.o mapreduce-worker.o mapreduce-reducer.o client-socket.o mr-messages.o mr-env.o mr-names.o thread-pool.o ostreamlock.o semaphore.o
 	$(CXX) $(CPPFLAGS) -o $@ $^ $(LDFLAGS)
 
-word-count-mapper: word-count-mapper.o mr-random.o
+word-count-mapper: word-count-mapper.o mr-random.o thread-pool.o ostreamlock.o semaphore.o
 	$(CXX) $(CPPFLAGS) -o $@ $^ $(LDFLAGS)
 
-word-count-reducer: word-count-reducer.o mr-random.o
+word-count-reducer: word-count-reducer.o mr-random.o thread-pool.o ostreamlock.o semaphore.o
 	$(CXX) $(CPPFLAGS) -o $@ $^ $(LDFLAGS)
 
 # In make's default rules, a .o automatically depends on its .cc file

@@ -650,14 +650,6 @@ A `web proxy server` is a server that acts as a go-between from your browser to 
 
 DETAILS ON ASSIGN 7
 
-`MapReduce` is a parallel, distributed programming model and implementation used to process and generate large data sets.
-- The `map` component of a MapReduce job typically parses input data and distills it down to some intermediate result.
-- The `reduce` component of a MapReduce job collates these intermediate results and distills them down even further to the desired output.
-- The pipeline of processes involved in a MapReduce job is captured by the below
-illustration: ![](./img/mapreduce.PNG)
-- The processes shaded in yellow are programs specific to the data set being processed, whereas the processes shaded in green are present in all MapReduce pipelines.
-- We'll invest some energy over the next several slides explaining what a mapper, a
-reducer, and the group-by-key processes look like.
 
 
 
